@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>資料查詢</title>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="資料查詢">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="theme-color" content="#f4f5f3">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="mkt" id="mkt"><span class="muted">大盤載入中…</span></div>
+  <span class="state muted" id="state"></span>
+</header>
+<div id="alertBar" class="alertbar" hidden></div>
+
+<main>
+  <!-- 自選 -->
+  <section id="v-watch" class="view">
+    <div class="head"><h2 data-alt="清單">自選股</h2><span class="muted small" id="wUpd"></span></div>
+    <div id="watch" class="list"><p class="muted">載入中…</p></div>
+    <h2 class="sub">到價提醒</h2>
+    <div id="alerts" class="list"></div>
+  </section>
+
+  <!-- 查詢 -->
+  <section id="v-quote" class="view" hidden>
+    <div class="search">
+      <input id="q" type="search" placeholder="代號或名稱，例如 2330、台積電" autocomplete="off" autocapitalize="off">
+      <ul id="sugg" class="sugg" hidden></ul>
+    </div>
+    <div id="quote"></div>
+    <div id="fund" hidden>
+      <div class="seg scroll" id="fTabs">
+        <button data-ft="trend" aria-pressed="true">趨勢</button>
+        <button data-ft="div" aria-pressed="false">配息</button>
+        <button data-ft="ret" aria-pressed="false">報酬</button>
+        <button data-ft="eps" aria-pressed="false">獲利</button>
+        <button data-ft="hold" aria-pressed="false" hidden>持股</button>
+        <button data-ft="calc" aria-pressed="false">試算</button>
+      </div>
+      <div id="fBody" class="panel"></div>
+    </div>
+  </section>
+
+  <!-- 持股 -->
+  <section id="v-hold" class="view" hidden>
+    <div class="head"><h2 data-alt="項目">持股</h2><button class="btn" id="hAddBtn">＋ 新增</button></div>
+    <form id="hForm" class="panel form" hidden>
+      <label>代號<input id="hCode" autocomplete="off" autocapitalize="off" placeholder="2330"></label>
+      <label>股數<input id="hShares" inputmode="numeric" placeholder="1000"></label>
+      <label>買進價<input id="hPrice" inputmode="decimal"></label>
+      <label>日期<input id="hDate" type="date"></label>
+      <p class="muted small" id="hFee"></p>
+      <button class="primary" type="submit">加入</button>
+    </form>
+    <div id="hSum" class="cards"></div>
+    <div id="holds" class="list"></div>
+  </section>
+
+  <!-- 排行 -->
+  <section id="v-movers" class="view" hidden>
+    <div class="seg" id="mvType">
+      <button data-t="stock" aria-pressed="true">股票</button>
+      <button data-t="etf" aria-pressed="false">ETF</button>
+      <button data-t="all" aria-pressed="false">全部</button>
+    </div>
+    <div class="filters">
+      <label>成交量 ≥ <select id="mvVol"><option value="200">200 張</option><option value="500">500 張</option><option value="1000">1,000 張</option><option value="3000">3,000 張</option></select></label>
+      <label>市值 ≥ <select id="mvCap"><option value="0">不限</option><option value="50">50 億</option><option value="100">100 億</option><option value="300">300 億</option><option value="1000">1,000 億</option></select></label>
+    </div>
+    <div class="seg" id="mvSide"><button data-s="up" aria-pressed="true" data-alt="前 10（+）">漲幅前 10</button><button data-s="down" aria-pressed="false" data-alt="前 10（−）">跌幅前 10</button></div>
+    <div id="movers" class="list"></div>
+    <p class="muted small" id="mvMeta"></p>
+  </section>
+
+  <!-- 設定 -->
+  <section id="v-settings" class="view" hidden>
+    <div class="panel set">
+      <div class="row"><span>外觀</span><div class="seg" id="sTheme"><button data-v="normal">一般</button><button data-v="stealth">低調</button></div></div>
+      <div class="row"><span>更新頻率</span><select id="sInt"><option value="3">每 3 秒</option><option value="5">每 5 秒</option><option value="10">每 10 秒</option></select></div>
+      <div class="row"><span>只在開盤時間更新</span><input type="checkbox" id="sMkt" class="switch"></div>
+    </div>
+    <h2 class="sub">手續費（試算與持股損益用）</h2>
+    <div class="panel set">
+      <div class="row"><span>手續費率</span><span><input id="sRate" inputmode="decimal" class="num"> %</span></div>
+      <div class="row"><span>折扣</span><span><input id="sDisc" inputmode="decimal" class="num"> 折</span></div>
+      <div class="row"><span>最低手續費</span><span><input id="sMin" inputmode="decimal" class="num"> 元</span></div>
+    </div>
+    <h2 class="sub">同步</h2>
+    <div class="panel set">
+      <p class="muted small" id="syncInfo"></p>
+      <div class="btnrow"><button class="btn" id="sSync">立即同步</button><button class="btn" id="sRepair">重新配對</button></div>
+    </div>
+    <p class="muted small" id="sVer"></p>
+  </section>
+</main>
+
+<nav class="tabbar">
+  <button data-tab="watch" aria-current="page"><span class="ic">★</span><span data-alt="清單">自選</span></button>
+  <button data-tab="quote"><span class="ic">⌕</span><span>查詢</span></button>
+  <button data-tab="hold"><span class="ic">▤</span><span data-alt="項目">持股</span></button>
+  <button data-tab="movers"><span class="ic">↕</span><span data-alt="排序">排行</span></button>
+  <button data-tab="settings"><span class="ic">⚙</span><span>設定</span></button>
+</nav>
+
+<!-- 第一次使用：配對 -->
+<div id="setup" class="setup" hidden>
+  <div class="panel">
+    <h2>連結電腦版</h2>
+    <p class="muted small">在電腦版右上角 ⚙ →「手機同步設定」按「產生手機配對碼」，把 8 碼配對碼輸入下面。</p>
+    <label>轉接站網址<input id="suUrl" placeholder="https://xxxx.workers.dev" autocomplete="off" autocapitalize="off"></label>
+    <label>配對碼<input id="suCode" placeholder="8 碼英數字" autocomplete="off" autocapitalize="characters" maxlength="8"></label>
+    <button class="primary" id="suGo">連結</button>
+    <p class="muted small" id="suMsg"></p>
+  </div>
+</div>
+
+<div id="toast" class="toast" hidden></div>
+<div id="loading" class="loading">載入中…</div>
+
+<script src="config.js"></script>
+<script src="vendor/sql-wasm.js"></script>
+<script src="db.js"></script>
+<script src="calc.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
