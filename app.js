@@ -1,5 +1,5 @@
 // 資料查詢（手機版）：大盤、自選股、查詢與基本資料、試算、持股、排行、到價提醒；與電腦版同步
-const APP_VERSION = '1.0.0';
+const APP_VERSION = '1.1.0';
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmt = (n, d = 0) => Number(n).toLocaleString('zh-TW', { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -465,6 +465,116 @@ async function syncNow() {
 function syncSoon(ms = 1500) { clearTimeout(syncT); syncT = setTimeout(syncNow, ms); }
 setInterval(() => { if (!document.hidden) syncNow(); }, 60e3);
 
+// ---------- 日報（電腦版產生，透過轉接站下載；讀過的存在手機，離線也能看） ----------
+let rpKind = 'all', rpOpen = null;
+function mdToHtml(md) {
+  const inline = s => esc(s).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
+    .replace(/(^|[\s（(])(https?:\/\/[^\s<）)]+)/g, '$1<a href="$2" target="_blank" rel="noopener">$2</a>');
+  const lines = String(md || '').replace(/\r/g, '').split('\n'), out = [];
+  let list = null;
+  const close = () => { if (list) { out.push(`</${list}>`); list = null; } };
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i];
+    if (/^\s*\|.*\|\s*$/.test(l) && /^\s*\|[\s:|-]+\|\s*$/.test(lines[i + 1] || '')) {
+      close();
+      const cells = r => r.trim().replace(/^\||\|$/g, '').split('|').map(x => x.trim());
+      const head = cells(l); i += 2; const rows = [];
+      while (i < lines.length && /^\s*\|.*\|\s*$/.test(lines[i])) rows.push(cells(lines[i++]));
+      i--;
+      out.push(`<div class="tw"><table><tr>${head.map(x => `<th>${inline(x)}</th>`).join('')}</tr>${rows.map(r => `<tr>${r.map(x => `<td>${inline(x)}</td>`).join('')}</tr>`).join('')}</table></div>`);
+      continue;
+    }
+    const h = l.match(/^(#{1,4})\s+(.*)$/);
+    if (h) { close(); out.push(`<h${h[1].length}>${inline(h[2])}</h${h[1].length}>`); continue; }
+    const ul = l.match(/^\s*[-*]\s+(.*)$/), ol = l.match(/^\s*\d+[.)]\s+(.*)$/);
+    if (ul || ol) { const t = ul ? 'ul' : 'ol'; if (list !== t) { close(); out.push(`<${t}>`); list = t; } out.push(`<li>${inline((ul || ol)[1])}</li>`); continue; }
+    close();
+    if (l.trim()) out.push(`<p>${inline(l)}</p>`);
+  }
+  close();
+  return out.join('');
+}
+async function loadReports() {
+  try {
+    const { reports } = await api('/reports');
+    const keep = new Set(reports.map(r => r.key));
+    DB.batch(run => {
+      for (const r of reports) {
+        const local = DB.get('SELECT created_at FROM reports WHERE key = ?', [r.key]);
+        if (!local) run('INSERT INTO reports (key, kind, created_at, model, headline, count) VALUES (?, ?, ?, ?, ?, ?)', [r.key, r.kind, r.created_at, r.model, r.headline, r.count]);
+        else if (local.created_at !== r.created_at) run('UPDATE reports SET kind = ?, created_at = ?, model = ?, headline = ?, count = ?, json = NULL WHERE key = ?', [r.kind, r.created_at, r.model, r.headline, r.count, r.key]);
+      }
+      for (const l of DB.all('SELECT key FROM reports')) if (!keep.has(l.key)) run('DELETE FROM reports WHERE key = ?', [l.key]);
+    });
+    renderReports();
+    prefetchReports();
+  } catch (e) {
+    renderReports(`目前連不上轉接站，顯示手機裡已下載的日報（${e.message}）`);
+  }
+}
+// 背景下載最新 10 份，通勤沒訊號時也能看
+async function prefetchReports() {
+  for (const r of DB.all('SELECT key FROM reports WHERE json IS NULL ORDER BY created_at DESC LIMIT 10')) {
+    try { const j = await api(`/report?key=${encodeURIComponent(r.key)}`); DB.run('UPDATE reports SET json = ? WHERE key = ?', [JSON.stringify(j), r.key]); } catch { break; }
+  }
+  if (!rpOpen) renderReports();
+}
+function hilite(text, words) {
+  let s = esc(text);
+  for (const w of words) s = s.replace(new RegExp(esc(w).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), m => `<mark>${m}</mark>`);
+  return s;
+}
+function renderReports(note) {
+  document.querySelectorAll('#rpKind button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.k === rpKind)));
+  const words = $('rpQ').value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  let rows = DB.all('SELECT * FROM reports ORDER BY created_at DESC');
+  if (rpKind !== 'all') rows = rows.filter(r => (r.kind || 'video') === rpKind);
+  if (words.length) rows = rows.filter(r => { const hay = `${r.key} ${r.headline} ${r.json || ''}`.toLowerCase(); return words.every(w => hay.includes(w)); });
+  const total = DB.get('SELECT COUNT(*) AS n, SUM(json IS NOT NULL) AS d FROM reports');
+  $('rpMeta').textContent = note || (total.n ? `共 ${total.n} 份，已下載 ${total.d || 0} 份可離線閱讀${words.length ? '（搜尋只涵蓋已下載的內容）' : ''}` : '');
+  $('reports').innerHTML = rows.length ? rows.map(r => `<div class="rp" data-key="${esc(r.key)}">
+    <span class="t"><b>${esc(r.key.replace(/ (自訂|社群)$/, ''))}</b><span class="pill ${r.kind === 'social' ? 'social' : ''}">${r.kind === 'social' ? '社群' : r.key.endsWith('自訂') ? '自訂分析' : '每日'}</span>
+      <span class="muted small">${r.count || 0} ${r.kind === 'social' ? '則' : '支'}</span>${r.json ? '' : '<span class="offline">未下載</span>'}</span>
+    <span class="h">${hilite(r.headline || '', words)}</span></div>`).join('')
+    : `<p class="empty">${total.n ? '沒有符合的日報。' : '還沒有日報。電腦版產生日報後，下次同步就會出現在這裡。'}</p>`;
+}
+async function openReport(key) {
+  let r = DB.get('SELECT * FROM reports WHERE key = ?', [key]);
+  if (!r) return;
+  rpOpen = key;
+  $('rpList').hidden = true; $('rpView').hidden = false; window.scrollTo(0, 0);
+  $('rpBody').innerHTML = '<p class="empty">載入中…</p>'; $('rpStats').innerHTML = ''; $('rpItems').innerHTML = '';
+  let j = r.json ? JSON.parse(r.json) : null;
+  if (!j) {
+    try { j = await api(`/report?key=${encodeURIComponent(key)}`); DB.run('UPDATE reports SET json = ? WHERE key = ?', [JSON.stringify(j), key]); }
+    catch (e) { $('rpBody').innerHTML = `<p class="empty">這份日報還沒下載到手機，目前也連不上轉接站（${esc(e.message)}）。</p>`; return; }
+  }
+  if (rpOpen !== key) return;
+  $('rpInfo').textContent = `${String(j.created_at || '').slice(5, 16)}・${j.model || ''}`;
+  $('rpItemsSum').textContent = `收錄的${j.kind === 'social' ? '貼文' : '影片'}（${(j.items || []).length}）`;
+  $('rpItems').innerHTML = `<ol>${(j.items || []).map(it => `<li>${it.url ? `<a href="${esc(it.url)}" target="_blank" rel="noopener">${esc(it.title)}</a>` : esc(it.title)} <span class="muted small">${esc(it.channel || '')}</span></li>`).join('')}</ol>`;
+  $('rpStats').innerHTML = j.stats ? socialStats(j.stats) : '';
+  $('rpBody').innerHTML = mdToHtml(j.content);
+}
+// 社群日報的統計：數字、個股熱度（點開看誰說了什麼）、帳號觀點
+function socialStats(st) {
+  const pct = (a, b) => b ? Math.round(a / b * 100) : 0;
+  return `<div class="cards"><div class="card"><span>收集貼文</span><b>${st.totalPosts}</b></div><div class="card"><span>和股票有關</span><b>${st.stockPosts}</b></div>
+    <div class="card"><span>提到的個股</span><b>${st.tickers.length} 檔</b></div><div class="card"><span>整體氣氛</span><b class="${st.overall === '偏多' ? 'up' : st.overall === '偏空' ? 'down' : ''}">${esc(st.overall)}</b></div></div>
+    ${st.tickers.length ? `<div class="panel heat" style="margin-bottom:10px"><b>個股熱度</b>${st.tickers.slice(0, 15).map(t => `<details><summary class="hr"><span class="nm">${esc(t.ticker && t.ticker !== t.name ? `${t.ticker} ${t.name}` : t.name)}</span>
+      <span class="mkb">${t.market === '台股' ? '台' : t.market === '美股' ? '美' : '他'}</span>
+      <span class="sbar"><i class="b" style="width:${pct(t.看多, t.mentions)}%"></i><i class="s" style="width:${pct(t.看空, t.mentions)}%"></i><i class="n" style="width:${pct(t.中性, t.mentions)}%"></i></span>
+      <span class="n small">${t.mentions} 次</span></summary>
+      <div class="hq">${t.quotes.map(q => `<span><b>${esc(q.author)}</b>（${esc(q.view)}）：${esc(q.reason || '')}</span>`).join('')}
+      ${t.market === '台股' && stockMap.has(t.ticker) ? `<button class="btn" data-open="${esc(t.ticker)}">看報價</button>` : ''}</div></details>`).join('')}</div>` : ''}`;
+}
+$('reports').addEventListener('click', e => { const r = e.target.closest('[data-key]'); if (r) openReport(r.dataset.key); });
+$('rpBack').addEventListener('click', () => { rpOpen = null; $('rpView').hidden = true; $('rpList').hidden = false; renderReports(); });
+$('rpKind').addEventListener('click', e => { const b = e.target.closest('[data-k]'); if (b) { rpKind = b.dataset.k; renderReports(); } });
+$('rpQ').addEventListener('input', () => renderReports());
+$('rpStats').addEventListener('click', e => { const b = e.target.closest('[data-open]'); if (b) openStock(b.dataset.open); });
+
 // ---------- 分頁 ----------
 function go(v) {
   view = v;
@@ -475,6 +585,7 @@ function go(v) {
   if (v === 'hold') renderHold();
   if (v === 'movers') { syncMvUi(); loadMovers(); }
   if (v === 'settings') renderSettings();
+  if (v === 'reports') { if (!rpOpen) { renderReports(); loadReports(); } }
   window.scrollTo(0, 0);
 }
 document.querySelectorAll('.tabbar button').forEach(b => b.addEventListener('click', () => go(b.dataset.tab)));

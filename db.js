@@ -33,6 +33,9 @@
     CREATE TABLE IF NOT EXISTS alerts (      -- 到價提醒（與電腦版同步）
       uid TEXT PRIMARY KEY, code TEXT NOT NULL, direction TEXT NOT NULL, price REAL NOT NULL, created_at TEXT, triggered_at TEXT, hit_price REAL
     );
+    CREATE TABLE IF NOT EXISTS reports (     -- 日報（從轉接站下載後存在手機，離線也能看）
+      key TEXT PRIMARY KEY, kind TEXT, created_at TEXT, model TEXT, headline TEXT, count INTEGER, json TEXT
+    );
     CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
     CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
   `;

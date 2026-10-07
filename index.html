@@ -81,6 +81,22 @@
     <p class="muted small" id="mvMeta"></p>
   </section>
 
+  <!-- 日報 -->
+  <section id="v-reports" class="view" hidden>
+    <div id="rpList">
+      <div class="seg" id="rpKind"><button data-k="all" aria-pressed="true">全部</button><button data-k="video" aria-pressed="false" data-alt="影片">影片日報</button><button data-k="social" aria-pressed="false" data-alt="社群">社群日報</button></div>
+      <div class="search"><input id="rpQ" type="search" placeholder="搜尋股票、產業、關鍵字" autocomplete="off"></div>
+      <p class="muted small" id="rpMeta"></p>
+      <div id="reports" class="list"></div>
+    </div>
+    <div id="rpView" hidden>
+      <div class="head"><button class="btn" id="rpBack">‹ 返回</button><span class="muted small" id="rpInfo"></span></div>
+      <div id="rpStats"></div>
+      <details class="panel rp-items"><summary id="rpItemsSum">收錄內容</summary><div id="rpItems"></div></details>
+      <article class="md panel" id="rpBody"></article>
+    </div>
+  </section>
+
   <!-- 設定 -->
   <section id="v-settings" class="view" hidden>
     <div class="panel set">
@@ -108,6 +124,7 @@
   <button data-tab="quote"><span class="ic">⌕</span><span>查詢</span></button>
   <button data-tab="hold"><span class="ic">▤</span><span data-alt="項目">持股</span></button>
   <button data-tab="movers"><span class="ic">↕</span><span data-alt="排序">排行</span></button>
+  <button data-tab="reports"><span class="ic">≡</span><span>日報</span></button>
   <button data-tab="settings"><span class="ic">⚙</span><span>設定</span></button>
 </nav>
 
