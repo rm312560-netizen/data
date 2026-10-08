@@ -166,3 +166,7 @@ body.stealth mark { background: #e6e6e6; }
 .sbar i { display: block; height: 100%; } .sbar .b { background: var(--up); } .sbar .s { background: var(--down); } .sbar .n { background: var(--muted); opacity: .4; }
 body.stealth .sbar .s { opacity: .45; }
 .hq { font-size: .78rem; color: var(--muted); padding: 2px 0 6px 6px; display: grid; gap: 2px; }
+
+/* 整股／零股切換 */
+.seg.qmode { display: inline-flex; width: max-content; margin: 6px 0; }
+.seg.qmode button { flex: none; padding: 4px 16px; }

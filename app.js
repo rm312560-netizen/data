@@ -1,5 +1,5 @@
 // 資料查詢（手機版）：大盤、自選股、查詢與基本資料、試算、持股、排行、到價提醒；與電腦版同步
-const APP_VERSION = '1.1.0';
+const APP_VERSION = '1.2.0';
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmt = (n, d = 0) => Number(n).toLocaleString('zh-TW', { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -15,6 +15,7 @@ function loadSettings() {
     theme: DB.setting('theme', 'stealth'), interval: DB.setting('interval', 5), marketOnly: DB.setting('marketOnly', true),
     rate: DB.setting('rate', 0.1425), disc: DB.setting('disc', 6), minFee: DB.setting('minFee', 20),
     mvType: DB.setting('mvType', 'stock'), mvVol: DB.setting('mvVol', 500), mvCap: DB.setting('mvCap', 0),
+    qmode: DB.setting('qmode', 'lot'),          // 報價顯示：lot 整股（張）／odd 零股（股）
   });
 }
 const setS = (k, v) => { S[k] = v; DB.setSetting(k, v); };
@@ -79,7 +80,7 @@ function taipei() {
   return { date: t.slice(0, 10), hm: Number(t.slice(11, 13)) * 60 + Number(t.slice(14, 16)), day: new Date(`${t.slice(0, 10)}T12:00:00+08:00`).getUTCDay() };
 }
 const marketOpen = () => { const n = taipei(); return n.day >= 1 && n.day <= 5 && n.hm >= 540 && n.hm < 815; };
-let timer = null, lastOk = 0, Q = {}, INDEX = [], inflight = false;
+let timer = null, lastOk = 0, Q = {}, ODD = {}, INDEX = [], inflight = false;
 function startTimer() { clearInterval(timer); poll(true); timer = setInterval(poll, S.interval * 1000); }
 async function poll(force) {
   if (inflight || !S.token || document.hidden) return;
@@ -89,6 +90,10 @@ async function poll(force) {
     const codes = [...new Set([cur?.code, ...watchCodes(), ...DB.all('SELECT DISTINCT code FROM holdings').map(r => r.code), ...DB.all('SELECT DISTINCT code FROM alerts WHERE triggered_at IS NULL').map(r => r.code)].filter(Boolean))];
     const [qr, ir] = await Promise.all([codes.length ? api(`/quote?codes=${codes.join(',')}`) : { quotes: [] }, api('/index')]);
     qr.quotes.forEach(q => { Q[q.code] = q; });
+    if (cur && view === 'quote' && S.qmode === 'odd') {
+      try { const o = await api(`/odd?codes=${cur.code}`); const x = o.quotes.find(q => q.code === cur.code); if (x) ODD[cur.code] = x; }
+      catch (e) { ODD[cur.code] = { error: e.message }; }
+    }
     INDEX = ir.indexes || INDEX;
     lastOk = Date.now();
     renderIndex(); renderWatch(); if (view === 'hold') renderHold(); if (view === 'quote') renderQuote(); checkAlerts();
@@ -181,9 +186,11 @@ function renderQuote() {
   const s = cur, qt = Q[s.code], v = x => x > 0 ? fmt(x, 2) : '—';
   const inWatch = !!DB.get('SELECT 1 FROM watchlist WHERE code = ?', [s.code]);
   const d = qt ? qt.price - qt.prevClose : 0;
+  const odd = S.qmode === 'odd';
   $('quote').innerHTML = `<div class="panel qcard">
     <div class="qhead"><b>${s.code} ${esc(s.name)} <span class="muted small">${MKT[s.market] || ''}</span></b><span class="muted small">${qt ? `${esc(qt.time)} 更新` : '報價載入中…'}</span></div>
-    ${qt ? `<div class="qprice"><span class="big ${cls(d)}">${v(qt.price)}</span><span class="${cls(d)}">${sign(d)}${fmt(Math.abs(d), 2)}（${pctTxt(qt.prevClose ? d / qt.prevClose * 100 : 0)}）</span></div>
+    <div class="seg qmode" id="qMode"><button data-qm="lot" aria-pressed="${!odd}">整股</button><button data-qm="odd" aria-pressed="${odd}">零股</button></div>
+    ${odd ? oddHtml(qt, ODD[s.code], v) : qt ? `<div class="qprice"><span class="big ${cls(d)}">${v(qt.price)}</span><span class="${cls(d)}">${sign(d)}${fmt(Math.abs(d), 2)}（${pctTxt(qt.prevClose ? d / qt.prevClose * 100 : 0)}）</span></div>
     <div class="qstats"><div><span class="muted">開盤</span><b>${v(qt.open)}</b></div><div><span class="muted">最高</span><b>${v(qt.high)}</b></div><div><span class="muted">最低</span><b>${v(qt.low)}</b></div><div><span class="muted">昨收</span><b>${v(qt.prevClose)}</b></div>
       <div><span class="muted">成交量</span><b>${qt.volume != null ? fmt(qt.volume) : '—'}</b></div><div><span class="muted">漲停</span><b>${v(qt.limitUp)}</b></div><div><span class="muted">跌停</span><b>${v(qt.limitDown)}</b></div>
       <div><span class="muted">市值</span><b>${s.shares && qt.price ? capTxt(s.shares * qt.price / 1e8) : '—'}</b></div></div>
@@ -198,6 +205,7 @@ function renderQuote() {
     renderQuote(); renderWatch(); syncSoon(); toast(inWatch ? '已移出自選' : '已加入自選');
   };
   $('qAlert').onclick = () => { $('qAlertForm').hidden = !$('qAlertForm').hidden; };
+  $('qMode').onclick = e => { const b = e.target.closest('[data-qm]'); if (!b || b.dataset.qm === S.qmode) return; setS('qmode', b.dataset.qm); renderQuote(); if (b.dataset.qm === 'odd') poll(true); };
   $('qAlertForm').onsubmit = e => {
     e.preventDefault(); const p = Number($('qaPrice').value);
     if (!(p > 0)) return toast('請輸入價格');
@@ -206,6 +214,21 @@ function renderQuote() {
   };
   $('qHold').onclick = () => { go('hold'); openHoldForm(s.code, qt?.price || s.close); };
   $('fund').hidden = false;
+}
+// 零股：價格、與整股的差價、成交量（股）、五檔（股數）
+function oddHtml(qt, o, v) {
+  if (!o) return '<p class="muted small">零股報價載入中…</p>';
+  if (o.error) return `<p class="muted small">零股報價取得失敗：${esc(o.error)}</p>`;
+  const d = o.price - o.prevClose, diff = qt?.price > 0 && o.price > 0 ? o.price - qt.price : null;
+  const src = { trade: '零股成交價', mid: '零股尚無成交，以買賣中間價估算', prev: '零股尚無成交，顯示昨收' }[o.priceSource] || '';
+  const rows = arr => (arr || []).slice(0, 5).map(b => `<tr><td class="${cls(b.price - o.prevClose)}">${v(b.price)}</td><td>${b.vol != null ? fmt(b.vol) : ''}</td></tr>`).join('');
+  return `<div class="qprice"><span class="big ${cls(d)}">${v(o.price)}</span><span class="${cls(d)}">${sign(d)}${fmt(Math.abs(d), 2)}（${pctTxt(o.prevClose ? d / o.prevClose * 100 : 0)}）</span></div>
+    <div class="muted small">${src}${o.time ? `・${esc(o.time)}` : ''}${diff != null ? `・比整股 ${v(qt.price)} ${diff === 0 ? '相同' : `${diff > 0 ? '貴' : '便宜'} ${fmt(Math.abs(diff), 2)}`}` : ''}</div>
+    <div class="qstats"><div><span class="muted">開盤</span><b>${v(o.open)}</b></div><div><span class="muted">最高</span><b>${v(o.high)}</b></div><div><span class="muted">最低</span><b>${v(o.low)}</b></div><div><span class="muted">昨收</span><b>${v(o.prevClose)}</b></div>
+      <div><span class="muted">成交（股）</span><b>${o.volume != null ? fmt(o.volume) : '—'}</b></div><div><span class="muted">約合（張）</span><b>${o.volume != null ? fmt(o.volume / 1000, 1) : '—'}</b></div>
+      <div><span class="muted">最近一筆</span><b>${o.lastVol != null ? `${fmt(o.lastVol)} 股` : '—'}</b></div><div><span class="muted">買 1 股</span><b>${v(o.price)}</b></div></div>
+    <div class="book"><table>${rows(o.bids)}</table><table>${rows(o.asks)}</table></div>
+    <p class="muted small">五檔數量單位是「股」。盤中零股 09:00～13:30、盤後零股 13:40～14:30，集合競價成交較慢。</p>`;
 }
 const capTxt = c => c >= 10000 ? `${fmt(c / 10000, 2)} 兆` : `${fmt(c, c >= 100 ? 0 : 1)} 億`;
 
