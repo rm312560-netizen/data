@@ -33,6 +33,10 @@
     CREATE TABLE IF NOT EXISTS alerts (      -- 到價提醒（與電腦版同步）
       uid TEXT PRIMARY KEY, code TEXT NOT NULL, direction TEXT NOT NULL, price REAL NOT NULL, created_at TEXT, triggered_at TEXT, hit_price REAL
     );
+    CREATE TABLE IF NOT EXISTS sells (       -- 賣出紀錄（已實現損益，與電腦版同步）
+      uid TEXT PRIMARY KEY, code TEXT NOT NULL, sell_date TEXT NOT NULL, shares INTEGER NOT NULL, price REAL NOT NULL, fee REAL NOT NULL, tax REAL NOT NULL,
+      buy_date TEXT, buy_price REAL NOT NULL, buy_fee REAL NOT NULL, note TEXT
+    );
     CREATE TABLE IF NOT EXISTS reports (     -- 日報（從轉接站下載後存在手機，離線也能看）
       key TEXT PRIMARY KEY, kind TEXT, created_at TEXT, model TEXT, headline TEXT, count INTEGER, json TEXT
     );
@@ -46,6 +50,10 @@
       const bytes = await idbGet().catch(() => null);
       db = bytes ? new SQL.Database(new Uint8Array(bytes)) : new SQL.Database();
       db.exec(SCHEMA);
+      // 舊資料庫補欄位：停損、停利價
+      const cols = db.exec("SELECT name FROM pragma_table_info('holdings')")[0]?.values.flat() || [];
+      if (!cols.includes('stop_price')) db.exec('ALTER TABLE holdings ADD COLUMN stop_price REAL');
+      if (!cols.includes('take_price')) db.exec('ALTER TABLE holdings ADD COLUMN take_price REAL');
       await DB.saveNow();
       if (navigator.storage?.persist) navigator.storage.persist().catch(() => {});
     },

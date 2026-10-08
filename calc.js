@@ -95,6 +95,7 @@
     watchlist: C.merge3(base.watchlist, local.watchlist, remote.watchlist),
     holdings: C.merge3(base.holdings, local.holdings, remote.holdings),
     alerts: C.merge3(base.alerts, local.alerts, remote.alerts),
+    sells: C.merge3(base.sells, local.sells, remote.sells),
   });
   C.uid = () => Array.from(crypto.getRandomValues(new Uint8Array(8)), b => b.toString(16).padStart(2, '0')).join('');
 

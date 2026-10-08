@@ -1,5 +1,5 @@
 // 資料查詢（手機版）：大盤、自選股、查詢與基本資料、試算、持股、排行、到價提醒；與電腦版同步
-const APP_VERSION = '1.2.0';
+const APP_VERSION = '1.3.0';
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmt = (n, d = 0) => Number(n).toLocaleString('zh-TW', { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -135,24 +135,56 @@ function renderWatch() {
 $('watch').addEventListener('click', e => { const r = e.target.closest('[data-code]'); if (r) openStock(r.dataset.code); });
 
 // ---------- 到價提醒 ----------
+// 提醒條件（電腦版、轉接站推播用同一套規則）
+const ALERT_UNIT = { above: '元', below: '元', pct_up: '%', pct_down: '%', vol: '倍' };
+function alertLabel(a) {
+  const v = fmt(a.price, 2);
+  return { above: `≥ ${v}`, below: `≤ ${v}`, pct_up: `漲幅 ≥ ${v}%`, pct_down: `跌幅 ≥ ${v}%`, vol: `量 ≥ 均量 ${v} 倍`,
+    ma20_below: '跌破月線', ma20_above: '站上月線', high52: '創 52 週新高', low52: '創 52 週新低' }[a.direction] || a.direction;
+}
+function alertHit(a, q, r) {
+  const p = q?.price; if (!(p > 0)) return false;
+  const chg = q.prevClose > 0 ? (p - q.prevClose) / q.prevClose * 100 : 0;
+  switch (a.direction) {
+    case 'above': return p >= a.price;
+    case 'below': return p <= a.price;
+    case 'pct_up': return chg >= a.price;
+    case 'pct_down': return -chg >= a.price;
+    case 'vol': return r?.avgVol5 > 0 && q.volume >= r.avgVol5 * a.price;
+    case 'ma20_below': return r?.ma20 > 0 && p < r.ma20;
+    case 'ma20_above': return r?.ma20 > 0 && p > r.ma20;
+    case 'high52': return r?.high52 > 0 && p > r.high52;
+    case 'low52': return r?.low52 > 0 && p < r.low52;
+  }
+  return false;
+}
+// 進階提醒的參考數據（5 日均量、月線、52 週高低），每 30 分鐘從轉接站更新
+let REFS = {}, refsAt = 0;
+async function loadRefs() {
+  const codes = [...new Set(DB.all("SELECT code FROM alerts WHERE triggered_at IS NULL AND direction NOT IN ('above', 'below')").map(r => r.code))];
+  if (!codes.length || Date.now() - refsAt < 30 * 60e3) return;
+  refsAt = Date.now();
+  try { REFS = (await api(`/refs?codes=${codes.join(',')}`)).refs || {}; } catch { refsAt = 0; }
+}
 function renderAlerts() {
   const rows = DB.all('SELECT * FROM alerts ORDER BY triggered_at IS NOT NULL, created_at DESC');
   $('alerts').innerHTML = rows.length ? rows.map(a => {
     const s = stockMap.get(a.code) || {};
     return `<div class="li"><span class="nm"><small>${a.code}</small>${esc(s.name || '')}</span>
-      <span class="p">${a.direction === 'above' ? '≥' : '≤'} ${fmt(a.price, 2)}</span>
+      <span class="p">${esc(alertLabel(a))}</span>
       <button class="x" data-adel="${a.uid}" aria-label="刪除提醒">×</button>
       <span class="sub">${a.triggered_at ? `已到價 ${esc(String(a.triggered_at).slice(5, 16))}（${fmt(a.hit_price, 2)}）` : Q[a.code] ? `現價 ${fmt(Q[a.code].price, 2)}・等待中` : '等待中'}</span></div>`;
   }).join('') : '<p class="empty small">沒有提醒。App 開著的時候，股價到了會在上方顯示提醒。</p>';
 }
 $('alerts').addEventListener('click', e => { const b = e.target.closest('[data-adel]'); if (b) { DB.run('DELETE FROM alerts WHERE uid = ?', [b.dataset.adel]); renderAlerts(); syncSoon(); } });
 function checkAlerts() {
+  loadRefs();
   const hits = [];
   for (const a of DB.all('SELECT * FROM alerts WHERE triggered_at IS NULL')) {
     const q = Q[a.code]; if (!q?.price) continue;
-    if (a.direction === 'above' ? q.price >= a.price : q.price <= a.price) {
+    if (alertHit(a, q, REFS[a.code])) {
       DB.run('UPDATE alerts SET triggered_at = ?, hit_price = ? WHERE uid = ?', [new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Taipei' }), q.price, a.uid]);
-      hits.push(`${a.code} ${stockMap.get(a.code)?.name || ''} ${a.direction === 'above' ? '漲到' : '跌到'} ${fmt(q.price, 2)}`);
+      hits.push(`${a.code} ${stockMap.get(a.code)?.name || ''} ${alertLabel(a)}（${fmt(q.price, 2)}）`);
     }
   }
   if (hits.length) {
@@ -197,7 +229,7 @@ function renderQuote() {
     <div class="book"><table>${(qt.bids || []).slice(0, 5).map(b => `<tr><td class="${cls(b.price - qt.prevClose)}">${v(b.price)}</td><td>${b.vol != null ? fmt(b.vol) : ''}</td></tr>`).join('')}</table>
       <table>${(qt.asks || []).slice(0, 5).map(b => `<tr><td class="${cls(b.price - qt.prevClose)}">${v(b.price)}</td><td>${b.vol != null ? fmt(b.vol) : ''}</td></tr>`).join('')}</table></div>` : ''}
     <div class="qact"><button class="btn" id="qWatch">${inWatch ? '✓ 已在自選' : '＋ 加入自選'}</button><button class="btn" id="qAlert">到價提醒</button><button class="btn" id="qHold">加入持股</button></div>
-    <form class="inline" id="qAlertForm" hidden><select id="qaDir"><option value="above">漲到 ≥</option><option value="below">跌到 ≤</option></select><input id="qaPrice" inputmode="decimal" placeholder="價格"><button class="btn" type="submit">新增</button></form>
+    <form class="inline" id="qAlertForm" hidden><select id="qaDir"><option value="above">漲到 ≥</option><option value="below">跌到 ≤</option><option value="pct_up">漲幅 ≥ %</option><option value="pct_down">跌幅 ≥ %</option><option value="vol">量 ≥ 均量倍數</option><option value="ma20_below">跌破月線</option><option value="ma20_above">站上月線</option><option value="high52">創 52 週新高</option><option value="low52">創 52 週新低</option></select><input id="qaPrice" inputmode="decimal" placeholder="價格"><button class="btn" type="submit">新增</button></form>
   </div>`;
   $('qWatch').onclick = () => {
     if (inWatch) DB.run('DELETE FROM watchlist WHERE code = ?', [s.code]);
@@ -205,6 +237,7 @@ function renderQuote() {
     renderQuote(); renderWatch(); syncSoon(); toast(inWatch ? '已移出自選' : '已加入自選');
   };
   $('qAlert').onclick = () => { $('qAlertForm').hidden = !$('qAlertForm').hidden; };
+  $('qaDir').onchange = () => { const u = ALERT_UNIT[$('qaDir').value]; $('qaPrice').hidden = !u; $('qaPrice').placeholder = u === '元' ? '價格' : u === '%' ? '幾 %' : u === '倍' ? '幾倍' : ''; };
   $('qMode').onclick = e => { const b = e.target.closest('[data-qm]'); if (!b || b.dataset.qm === S.qmode) return; setS('qmode', b.dataset.qm); renderQuote(); if (b.dataset.qm === 'odd') poll(true); };
   $('qAlertForm').onsubmit = e => {
     e.preventDefault(); const p = Number($('qaPrice').value);
@@ -265,6 +298,7 @@ function priceNow() { return Q[cur?.code]?.price || cur?.close; }
 function renderFund() {
   document.querySelectorAll('[data-ft]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.ft === fTab)));
   if (fTab === 'calc') { $('fBody').innerHTML = calcHtml(); bindCalc(); return; }
+  if (['chips', 'rev', 'news', 'bt'].includes(fTab)) { fundExtra(cur.code, fTab); return; }
   if (!FUND) return;
   const F = FUND, price = priceNow(), body = $('fBody');
   const err = F.errs.length ? `<p class="muted small">部分資料讀取失敗：${esc(F.errs.join('；'))}</p>` : '';
@@ -316,6 +350,76 @@ function renderFund() {
       ${h.list.length > 20 ? `<button class="btn" id="holdMore" style="margin-top:8px">${holdAll ? '只顯示前 20 檔' : `顯示全部 ${fmt(h.list.length)} 檔`}</button>` : ''}
       <p class="muted small">${esc(h.source)}・${esc(h.date || '')}</p>${err}`;
   }
+}
+// ---------- 籌碼、營收、公告、回測 ----------
+const EXTRA = {};
+const lotsTxt = v => `<span class="${cls(v)}">${v > 0 ? '+' : v < 0 ? '-' : ''}${fmt(Math.abs(v))}</span>`;
+async function fundExtra(code, tab) {
+  const body = $('fBody'), key = `${tab}:${code}`;
+  if (tab === 'bt') { body.innerHTML = btHtml(code); bindBt(); return; }
+  if (!EXTRA[key]) {
+    body.innerHTML = '<p class="empty">載入中…</p>';
+    try {
+      if (tab === 'chips') {
+        const start = CALC.yearsAgo(0.15);
+        const [inst, mg] = await Promise.all([finmind('TaiwanStockInstitutionalInvestorsBuySell', code, start), finmind('TaiwanStockMarginPurchaseShortSale', code, start)]);
+        const by = {};
+        for (const r of inst) { const d = by[r.date] ||= { date: r.date, f: 0, t: 0, d: 0 }; const n = Math.round((r.buy - r.sell) / 1000); if (/Foreign/.test(r.name)) d.f += n; else if (/Investment_Trust/.test(r.name)) d.t += n; else if (/Dealer/.test(r.name)) d.d += n; }
+        EXTRA[key] = { days: Object.values(by).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 20), margin: mg.sort((a, b) => b.date.localeCompare(a.date)).slice(0, 20) };
+      }
+      if (tab === 'rev') EXTRA[key] = (await finmind('TaiwanStockMonthRevenue', code, CALC.yearsAgo(2.2))).map(r => ({ y: r.revenue_year, m: r.revenue_month, rev: r.revenue, pub: r.create_time }));
+      if (tab === 'news') EXTRA[key] = ((await api('/news')).items || []).filter(n => n.code === code);
+    } catch (e) { body.innerHTML = `<p class="empty">讀取失敗：${esc(e.message)}</p>`; return; }
+  }
+  if (fTab !== tab || cur?.code !== code) return;
+  const d = EXTRA[key];
+  if (tab === 'chips') {
+    if (!d.days.length) { body.innerHTML = '<p class="empty">查不到法人買賣超。</p>'; return; }
+    const streak = k => { let n = 0; const s = Math.sign(d.days[0][k]); if (!s) return '—'; for (const x of d.days) { if (Math.sign(x[k]) === s) n++; else break; } return s > 0 ? `連買 ${n} 天` : `連賣 ${n} 天`; };
+    const sum5 = k => d.days.slice(0, 5).reduce((t, x) => t + x[k], 0), m0 = d.margin[0];
+    body.innerHTML = `<div class="cards">${[['外資', 'f'], ['投信', 't'], ['自營商', 'd']].map(([n, k]) => `<div class="card"><span>${n}・${streak(k)}</span><b>${lotsTxt(sum5(k))}</b><span>近 5 日（張）</span></div>`).join('')}
+      ${m0 ? `<div class="card"><span>融資餘額</span><b>${fmt(m0.MarginPurchaseTodayBalance)}</b><span>${lotsTxt(m0.MarginPurchaseTodayBalance - m0.MarginPurchaseYesterdayBalance)} 張・融券 ${fmt(m0.ShortSaleTodayBalance)}</span></div>` : ''}</div>
+      <div class="twrap"><table class="tbl"><tr><th>日期</th><th>外資</th><th>投信</th><th>自營</th><th>融資</th></tr>
+      ${d.days.map(x => { const m = d.margin.find(y => y.date === x.date); return `<tr><td>${x.date.slice(5)}</td><td>${lotsTxt(x.f)}</td><td>${lotsTxt(x.t)}</td><td>${lotsTxt(x.d)}</td><td>${m ? lotsTxt(m.MarginPurchaseTodayBalance - m.MarginPurchaseYesterdayBalance) : ''}</td></tr>`; }).join('')}</table></div>
+      <p class="muted small">單位：張。FinMind（證交所、櫃買中心）盤後資料。</p>`;
+  }
+  if (tab === 'rev') {
+    if (!d.length) { body.innerHTML = `<p class="empty">${CALC.isEtf(code) ? 'ETF 沒有月營收。' : '查不到月營收。'}</p>`; return; }
+    const k = (y, m) => `${y}-${String(m).padStart(2, '0')}`, map = Object.fromEntries(d.map(r => [k(r.y, r.m), r]));
+    const rows = d.map(r => { const p = map[k(r.m === 1 ? r.y - 1 : r.y, r.m === 1 ? 12 : r.m - 1)], l = map[k(r.y - 1, r.m)];
+      return { mo: k(r.y, r.m), rev: r.rev, pub: r.pub, mom: p ? (r.rev / p.rev - 1) * 100 : null, yoy: l ? (r.rev / l.rev - 1) * 100 : null }; }).sort((a, b) => b.mo.localeCompare(a.mo)).slice(0, 18);
+    body.innerHTML = `<div class="cards"><div class="card"><span>最新 ${rows[0].mo}</span><b>${fmt(rows[0].rev / 1e8, 1)} 億</b></div><div class="card"><span>年增率</span><b class="${cls(rows[0].yoy)}">${pctTxt(rows[0].yoy)}</b><span>月增 ${pctTxt(rows[0].mom)}</span></div></div>
+      <div class="twrap"><table class="tbl"><tr><th>月份</th><th>營收（億）</th><th>月增</th><th>年增</th></tr>${rows.map(r => `<tr><td>${r.mo}</td><td>${fmt(r.rev / 1e8, 1)}</td><td class="${cls(r.mom)}">${pctTxt(r.mom)}</td><td class="${cls(r.yoy)}">${pctTxt(r.yoy)}</td></tr>`).join('')}</table></div>
+      <p class="muted small">每月 10 日前公布上個月營收。</p>`;
+  }
+  if (tab === 'news') body.innerHTML = newsHtml(d, '近 30 天沒有重大訊息（電腦版開著時才會更新這份資料）。');
+}
+function newsHtml(items, empty) {
+  return items.length ? items.map(n => `<details class="news"><summary><span class="d">${esc(n.date.slice(5))} ${esc(n.time || '')}・${esc(n.code)} ${esc(n.name || '')}</span><br>${esc(n.subject)}</summary>
+    ${n.summary ? `<p><b>AI 摘要：</b>${esc(n.summary)}</p>` : ''}<p class="small">${esc(n.detail || '').replace(/\n/g, '<br>')}</p></details>`).join('') : `<p class="empty small">${empty}</p>`;
+}
+function btHtml(code) {
+  return `<form class="btf" id="btForm"><label>代號（逗號分開，最多 3 檔）<input id="btCodes" value="${esc(code)}${code === '0050' ? ',0056' : ',0050'}" autocomplete="off" autocapitalize="characters"></label>
+    <label>每月投入<input id="btAmt" inputmode="numeric" value="10000"></label><label>每月幾號<input id="btDay" inputmode="numeric" value="6"></label>
+    <label>回測<select id="btYears"><option value="3">3 年</option><option value="5" selected>5 年</option><option value="10">10 年</option></select></label>
+    <button class="primary" type="submit" style="grid-column:1/-1">開始回測</button></form><div id="btOut"></div>`;
+}
+function bindBt() {
+  $('btForm').onsubmit = async e => {
+    e.preventDefault();
+    $('btOut').innerHTML = '<p class="empty">計算中…</p>';
+    try {
+      const r = await api('/backtest', { method: 'POST', body: JSON.stringify({ codes: $('btCodes').value, amount: $('btAmt').value, day: $('btDay').value, years: $('btYears').value, rate: S.rate, disc: S.disc, minFee: 1 }) });
+      if (r.error) throw new Error(r.error);
+      const ok = r.results.filter(x => !x.error), colors = ['var(--accent)', '#d08a2e', '#4c9a6a'];
+      const maxV = Math.max(1, ...ok.flatMap(x => x.curve.map(p => Math.max(p.v, p.inv)))), n = Math.max(2, ...ok.map(x => x.curve.length));
+      const path = (pts, k) => pts.map((p, i) => `${i ? 'L' : 'M'}${(i / (n - 1) * 1000).toFixed(1)},${(140 - p[k] / maxV * 132).toFixed(1)}`).join('');
+      $('btOut').innerHTML = r.results.map((x, i) => x.error ? `<p class="muted small">${x.code}：${esc(x.error)}</p>` : `<div class="card" style="margin-bottom:6px"><span><span style="color:${colors[i]}">●</span> ${x.code} ${esc(x.name || '')}・${x.times} 次</span>
+        <b>${fmt(x.value)}</b><span>投入 ${fmt(x.invested)}・<span class="${cls(x.pl)}">${pctTxt(x.plPct)}</span>・年化 ${x.irr != null ? pctTxt(x.irr) : '—'}・最大回落 -${fmt(x.maxDD, 1)}%</span></div>`).join('')
+        + (ok.length ? `<svg class="btc" viewBox="0 0 1000 142" preserveAspectRatio="none"><path d="${path(ok[0].curve, 'inv')}" fill="none" stroke="var(--muted)" stroke-dasharray="6 5" stroke-width="2"/>${ok.map((x, i) => `<path d="${path(x.curve, 'v')}" fill="none" stroke="${colors[i]}" stroke-width="3"/>`).join('')}</svg>
+          <p class="muted small">虛線是累計投入，實線是市值。用還原股價（配息再投入）、以金額買零股計算。過去績效不代表未來。</p>` : '');
+    } catch (err) { $('btOut').innerHTML = `<p class="empty">${esc(err.message)}</p>`; }
+  };
 }
 function chartHtml(h) {
   const days = { '6m': 182, '1y': 365, '3y': 1095, '5y': 1826 }[fRange];
@@ -407,19 +511,165 @@ function renderHold() {
     const q = Q[x.code], s = stockMap.get(x.code) || {}, price = q?.price ?? s.close ?? 0;
     const net = CALC.sellNet(x.shares, price, c, CALC.taxRate(x.code)), pl = net - x.cost;
     tot.mv += x.shares * price; tot.cost += x.cost; tot.net += net; if (q?.prevClose) tot.day += x.shares * (price - q.prevClose);
-    return { ...x, name: s.name, price, pl, pct: pl / x.cost * 100 };
+    const stop = x.lots.find(l => l.stop_price)?.stop_price || null, take = x.lots.find(l => l.take_price)?.take_price || null;
+    return { ...x, name: s.name, price, pl, pct: pl / x.cost * 100, stop, take, stopHit: stop && price > 0 && price <= stop, takeHit: take && price > 0 && price >= take };
   });
   const tpl = tot.net - tot.cost;
   $('hSum').innerHTML = `<div class="card"><span>市值</span><b>${fmt(tot.mv)}</b></div><div class="card"><span>損益（扣費稅）</span><b class="${cls(tpl)}">${tpl >= 0 ? '+' : '-'}${fmt(Math.abs(tpl))}</b><span class="${cls(tpl)}">${pctTxt(tot.cost ? tpl / tot.cost * 100 : 0)}</span></div>
     <div class="card"><span>成本</span><b>${fmt(tot.cost)}</b></div><div class="card"><span>今日</span><b class="${cls(tot.day)}">${tot.day >= 0 ? '+' : '-'}${fmt(Math.abs(tot.day))}</b></div>`;
-  $('holds').innerHTML = list.map(x => `<div class="li" data-toggle="${x.code}"><span class="nm"><small>${x.code}</small>${esc(x.name || '')}</span><span class="p">${fmt(x.price, 2)}</span><span class="c ${cls(x.pl)}">${pctTxt(x.pct)}</span>
+  const st = document.body.classList.contains('stealth');
+  $('holds').innerHTML = list.map(x => `<div class="li" data-toggle="${x.code}"><span class="nm"><small>${x.code}</small>${esc(x.name || '')}${x.stopHit ? `<span class="stopb down">${st ? '下限' : '停損'}</span>` : ''}${x.takeHit ? `<span class="stopb up">${st ? '上限' : '停利'}</span>` : ''}</span><span class="p">${fmt(x.price, 2)}</span><span class="c ${cls(x.pl)}">${pctTxt(x.pct)}</span>
     <span class="sub">${fmt(x.shares)} 股・均價 ${fmt(x.cost / x.shares, 2)}・損益 <span class="${cls(x.pl)}">${x.pl >= 0 ? '+' : '-'}${fmt(Math.abs(x.pl))}</span>・${x.lots.length} 筆 ▾</span></div>
-    ${openLots.has(x.code) ? x.lots.map(l => `<div class="li"><span class="nm small muted">${esc(l.buy_date)}・${fmt(l.shares)} 股 @ ${fmt(l.price, 2)}</span><span></span><button class="x" data-hdel="${l.uid}" aria-label="刪除這筆">×</button></div>`).join('') : ''}`).join('');
+    ${openLots.has(x.code) ? `<div class="hact"><span>${st ? '下限' : '停損'}</span><input data-stop="${x.code}" inputmode="decimal" value="${x.stop ?? ''}"><span>${st ? '上限' : '停利'}</span><input data-take="${x.code}" inputmode="decimal" value="${x.take ?? ''}"><button class="btn" data-stops="${x.code}">儲存</button><span class="muted">均價 -10% ${fmt(x.cost / x.shares * 0.9, 2)}・+20% ${fmt(x.cost / x.shares * 1.2, 2)}</span></div>`
+      + x.lots.map(l => `<div class="li"><span class="nm small muted">${esc(l.buy_date)}・${fmt(l.shares)} 股 @ ${fmt(l.price, 2)}</span><button class="btn" data-sell="${l.uid}" style="padding:2px 8px">賣出</button><button class="x" data-hdel="${l.uid}" aria-label="刪除這筆">×</button></div>
+        <form class="hact" data-sellform="${l.uid}" hidden><span>賣</span><input name="shares" inputmode="numeric" value="${l.shares}"><span>股 @</span><input name="price" inputmode="decimal" value="${x.price || ''}"><input name="date" type="date" value="${CALC.today()}"><button class="btn" type="submit">確定賣出</button></form>`).join('') : ''}`).join('');
+  checkStops(list);
 }
+// 停損停利：同一天同一檔只提示一次（推播由轉接站負責）
+const stopShown = new Set();
+function checkStops(list) {
+  const msgs = [];
+  for (const x of list) for (const [hit, kind, px] of [[x.stopHit, '停損', x.stop], [x.takeHit, '停利', x.take]]) {
+    const k = `${x.code}-${kind}-${CALC.today()}`;
+    if (hit && !stopShown.has(k)) { stopShown.add(k); msgs.push(`${x.code} ${x.name || ''} 到${kind}價 ${fmt(px, 2)}（現價 ${fmt(x.price, 2)}）`); }
+  }
+  if (msgs.length) { $('alertBar').hidden = false; $('alertBar').innerHTML = msgs.map(h => `<span>${esc(h)}</span>`).join('') + '<button id="abClose">知道了</button>'; $('abClose').onclick = () => { $('alertBar').hidden = true; }; }
+}
+$('holds').addEventListener('submit', e => {
+  const f = e.target.closest('[data-sellform]'); if (!f) return;
+  e.preventDefault();
+  const h = DB.get('SELECT * FROM holdings WHERE uid = ?', [f.dataset.sellform]);
+  const n = Math.floor(Number(f.shares.value)), p = Number(f.price.value);
+  if (!h || !(n > 0) || n > h.shares) return toast(`賣出股數要在 1～${h?.shares} 股之間`);
+  if (!(p > 0)) return toast('請輸入賣出價格');
+  const c = feeCfg(), fee = CALC.fee(n, p, c), tax = Math.floor(n * p * CALC.taxRate(h.code)), buyFee = Math.round(h.fee * n / h.shares * 100) / 100;
+  DB.batch(run => {
+    run('INSERT INTO sells (uid, code, sell_date, shares, price, fee, tax, buy_date, buy_price, buy_fee) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', [CALC.uid(), h.code, f.date.value || CALC.today(), n, p, fee, tax, h.buy_date, h.price, buyFee]);
+    if (n === h.shares) run('DELETE FROM holdings WHERE uid = ?', [h.uid]);
+    else run('UPDATE holdings SET shares = ?, fee = ? WHERE uid = ?', [h.shares - n, Math.round((h.fee - buyFee) * 100) / 100, h.uid]);
+  });
+  const pl = n * p - fee - tax - (n * h.price + buyFee);
+  toast(`已賣出，損益 ${pl >= 0 ? '+' : '-'}${fmt(Math.abs(pl))} 元`); renderHold(); syncSoon();
+});
 $('holds').addEventListener('click', e => {
+  const sb = e.target.closest('[data-sell]');
+  if (sb) { e.stopPropagation(); const f = document.querySelector(`[data-sellform="${sb.dataset.sell}"]`); f.hidden = !f.hidden; return; }
+  const ss = e.target.closest('[data-stops]');
+  if (ss) {
+    const code = ss.dataset.stops, v = x => { const n = Number(x); return n > 0 ? n : null; };
+    DB.run('UPDATE holdings SET stop_price = ?, take_price = ? WHERE code = ?', [v(document.querySelector(`[data-stop="${code}"]`).value), v(document.querySelector(`[data-take="${code}"]`).value), code]);
+    toast('已儲存，到價會通知'); renderHold(); syncSoon(); return;
+  }
+  if (e.target.closest('.hact')) return;
   const d = e.target.closest('[data-hdel]');
   if (d) { if (d.dataset.armed !== '1') { d.dataset.armed = '1'; d.textContent = '確定？'; return; } DB.run('DELETE FROM holdings WHERE uid = ?', [d.dataset.hdel]); renderHold(); syncSoon(); return; }
   const t = e.target.closest('[data-toggle]'); if (t) { const c = t.dataset.toggle; openLots.has(c) ? openLots.delete(c) : openLots.add(c); renderHold(); }
+});
+
+// ---------- 持股頁：除權息、年度損益、組合分析、重大訊息 ----------
+const DIVS = {};
+async function divsOf(code) {
+  if (DIVS[code]) return DIVS[code];
+  const rows = await finmind('TaiwanStockDividend', code, CALC.yearsAgo(3)).catch(() => []);
+  return DIVS[code] = rows.map(d => ({ exDate: d.CashExDividendTradingDate || '', payDate: d.CashDividendPaymentDate || '', cash: (d.CashEarningsDistribution || 0) + (d.CashStatutorySurplus || 0) })).filter(d => d.exDate && d.cash > 0);
+}
+function lotsAll() {
+  return [...DB.all('SELECT code, buy_date, shares FROM holdings').map(h => ({ code: h.code, buy: h.buy_date, sold: null, shares: h.shares })),
+    ...DB.all('SELECT code, buy_date, sell_date, shares FROM sells').map(s => ({ code: s.code, buy: s.buy_date || '0000', sold: s.sell_date, shares: s.shares }))];
+}
+async function renderDivPanel(box) {
+  const held = {}; for (const h of DB.all('SELECT code, SUM(shares) AS s FROM holdings GROUP BY code')) held[h.code] = h.s;
+  const codes = [...new Set([...Object.keys(held), ...watchCodes()])], today = CALC.today(), out = [];
+  for (const code of codes) for (const d of await divsOf(code)) if (d.exDate >= today) out.push({ code, ...d, shares: held[code] || 0 });
+  out.sort((a, b) => a.exDate.localeCompare(b.exDate));
+  box.innerHTML = out.length ? out.map(x => `<div class="li"><span class="nm"><small>${x.code}</small>${esc(stockMap.get(x.code)?.name || '')}${x.shares ? '' : '<small>（自選）</small>'}</span><span class="p">${esc(x.exDate.slice(5))}</span><span class="c">${fmt(x.cash, 3)} 元</span>
+    <span class="sub">${x.shares ? `持有 ${fmt(x.shares)} 股，預估可領 ${fmt(Math.round(x.shares * x.cash))} 元` : '目前沒持有'}${x.payDate ? `・${esc(x.payDate.slice(5))} 發放` : ''}</span></div>`).join('')
+    + '<p class="muted small">除息日前一天收盤前持有才領得到。開了推播，除息前一天晚上 7 點會通知。</p>' : '<p class="empty small">持股和自選股近期沒有除息公告。</p>';
+}
+async function renderYearPanel(box) {
+  const year = String(new Date().getFullYear()), sells = DB.all('SELECT * FROM sells WHERE sell_date LIKE ? ORDER BY sell_date DESC', [`${year}%`]);
+  const ls = lotsAll(), divs = [];
+  for (const code of [...new Set(ls.map(l => l.code))]) for (const d of await divsOf(code)) {
+    if (!d.exDate.startsWith(year) || d.exDate > CALC.today()) continue;
+    const sh = ls.filter(l => l.code === code && l.buy < d.exDate && (!l.sold || l.sold >= d.exDate)).reduce((t, l) => t + l.shares, 0);
+    if (sh) divs.push({ code, exDate: d.exDate, cash: d.cash, shares: sh, amount: Math.round(sh * d.cash) });
+  }
+  const pl = s => s.shares * s.price - s.fee - s.tax - (s.shares * s.buy_price + s.buy_fee);
+  const realized = sells.reduce((t, s) => t + pl(s), 0), divSum = divs.reduce((t, d) => t + d.amount, 0), nhi = divs.filter(d => d.amount >= 20000);
+  box.innerHTML = `<div class="cards"><div class="card"><span>${year} 已實現損益</span><b class="${cls(realized)}">${realized >= 0 ? '+' : '-'}${fmt(Math.abs(realized))}</b></div><div class="card"><span>股利收入</span><b>${fmt(divSum)}</b><span>${divs.length} 筆</span></div>
+    <div class="card"><span>手續費＋證交稅</span><b>${fmt(sells.reduce((t, s) => t + s.fee + s.tax + s.buy_fee, 0))}</b></div><div class="card"><span>合計</span><b class="${cls(realized + divSum)}">${fmt(realized + divSum)}</b></div></div>
+    ${nhi.length ? `<div class="warnl">有 ${nhi.length} 筆股利超過 2 萬元，會扣 2.11% 二代健保補充保費（約 ${fmt(nhi.reduce((t, d) => t + Math.round(d.amount * 0.0211), 0))} 元）。</div>` : ''}
+    ${sells.map(s => `<div class="li"><span class="nm"><small>${s.code}</small>${esc(stockMap.get(s.code)?.name || '')}</span><span class="p">${esc(s.sell_date.slice(5))}</span><span class="c ${cls(pl(s))}">${pl(s) >= 0 ? '+' : '-'}${fmt(Math.abs(pl(s)))}</span>
+      <span class="sub">${fmt(s.shares)} 股・買 ${fmt(s.buy_price, 2)} → 賣 ${fmt(s.price, 2)}</span></div>`).join('')}
+    ${divs.map(d => `<div class="li"><span class="nm"><small>${d.code}</small>股利</span><span class="p">${esc(d.exDate.slice(5))}</span><span class="c">${fmt(d.amount)}</span><span class="sub">${fmt(d.shares)} 股 × ${fmt(d.cash, 3)} 元</span></div>`).join('')}
+    <p class="muted small">在持股明細按「賣出」會記到這裡。完整的報表（含歷年）在電腦版「資產」頁。</p>`;
+}
+async function renderPfPanel(box) {
+  const rows = DB.all('SELECT code, SUM(shares) AS shares, SUM(shares * price + fee) AS cost FROM holdings GROUP BY code');
+  if (!rows.length) { box.innerHTML = '<p class="empty small">還沒有持股。</p>'; return; }
+  let ind = {};
+  try { ind = JSON.parse(DB.meta('industry') || '{}'); } catch {}
+  if (!ind._at || Date.now() - ind._at > 7 * 86400e3) {
+    try { const all = await finmind('TaiwanStockInfo', '', ''); ind = { _at: Date.now() }; for (const r of all) if (!ind[r.stock_id] || ind[r.stock_id] === '電子工業') ind[r.stock_id] = r.industry_category; DB.setMeta('industry', JSON.stringify(ind)); } catch {}
+  }
+  const st = rows.map(r => { const px = Q[r.code]?.price ?? stockMap.get(r.code)?.close ?? 0; return { ...r, name: stockMap.get(r.code)?.name || '', value: r.shares * px, industry: ind[r.code] || (CALC.isEtf(r.code) ? 'ETF' : '其他') }; });
+  const total = st.reduce((t, x) => t + x.value, 0) || 1;
+  st.forEach(x => { x.w = x.value / total * 100; }); st.sort((a, b) => b.value - a.value);
+  const inds = {}; for (const x of st) inds[x.industry] = (inds[x.industry] || 0) + x.w;
+  // ETF 成分股重疊（透過轉接站查 ETF 持股）
+  const etfs = st.filter(x => CALC.isEtf(x.code)), comp = {};
+  for (const e of etfs.slice(0, 5)) { try { comp[e.code] = (await api(`/etf-holdings?code=${e.code}`)).list || []; } catch {} }
+  const ov = [];
+  for (let i = 0; i < etfs.length; i++) for (let j = i + 1; j < etfs.length; j++) {
+    const A = comp[etfs[i].code] || [], B = Object.fromEntries((comp[etfs[j].code] || []).map(x => [x.twCode || x.name, x.weight]));
+    if (A.length && Object.keys(B).length) ov.push([etfs[i].code, etfs[j].code, Math.round(A.reduce((t, x) => t + Math.min(x.weight, B[x.twCode || x.name] || 0), 0))]);
+  }
+  const bar = (label, w) => `<div class="b"><span>${label}</span><i style="width:${Math.max(1, w)}%"></i><span>${fmt(w, 1)}%</span></div>`;
+  const warns = [];
+  if (st[0].w > 40) warns.push(`${st[0].code} 占了 ${fmt(st[0].w, 0)}%，集中在單一標的。`);
+  const topInd = Object.entries(inds).sort((a, b) => b[1] - a[1])[0];
+  if (topInd && topInd[1] > 60 && topInd[0] !== 'ETF') warns.push(`${topInd[0]} 占了 ${fmt(topInd[1], 0)}%，產業過度集中。`);
+  for (const [a, b, o] of ov) if (o >= 50) warns.push(`${a} 和 ${b} 成分股重疊約 ${o}%，分散效果有限。`);
+  box.innerHTML = `${warns.map(w => `<div class="warnl">${esc(w)}</div>`).join('')}<div class="bars"><b class="small">各檔占比</b>${st.map(x => bar(`${x.code} ${esc(x.name)}`, x.w)).join('')}
+    <b class="small">產業分布</b>${Object.entries(inds).sort((a, b) => b[1] - a[1]).map(([k, w]) => bar(esc(k), w)).join('')}</div>
+    ${ov.length ? `<p class="small">ETF 重疊：${ov.map(([a, b, o]) => `${a}×${b} ${o}%`).join('、')}</p>` : ''}<p class="muted small">和大盤比較、透過 ETF 間接持有的股票，在電腦版「資產」頁。</p>`;
+}
+async function renderNewsPanel(box) {
+  try {
+    const codes = new Set([...DB.all('SELECT DISTINCT code FROM holdings').map(r => r.code), ...watchCodes()]);
+    const r = await api('/news');
+    box.innerHTML = newsHtml((r.items || []).filter(n => codes.has(n.code)), '近 30 天持股與自選股沒有重大訊息。') + (r.at ? `<p class="muted small">電腦版整理於 ${esc(r.at.slice(5, 16))}</p>` : '');
+  } catch (e) { box.innerHTML = `<p class="empty small">讀取失敗：${esc(e.message)}</p>`; }
+}
+for (const [id, fn] of [['pDiv', renderDivPanel], ['pYear', renderYearPanel], ['pPf', renderPfPanel], ['pNews', renderNewsPanel]]) {
+  $(id).addEventListener('toggle', () => { if ($(id).open) { const b = $(id).querySelector('.mbody'); b.innerHTML = '<p class="empty small">載入中…</p>'; fn(b).catch(e => { b.innerHTML = `<p class="empty small">${esc(e.message)}</p>`; }); } });
+}
+
+// ---------- 推播通知 ----------
+function urlB64ToUint8(s) { const p = '='.repeat((4 - s.length % 4) % 4), b = atob((s + p).replace(/-/g, '+').replace(/_/g, '/')); return Uint8Array.from(b, c => c.charCodeAt(0)); }
+async function pushState() {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) return '這個瀏覽器不支援推播。iPhone 要 iOS 16.4 以上，而且要從主畫面打開 App。';
+  const reg = await navigator.serviceWorker.getRegistration();
+  const sub = await reg?.pushManager.getSubscription();
+  return sub ? '已開啟推播：到價提醒、停損停利、除息前一天會通知。' : Notification.permission === 'denied' ? '通知被關閉了，請到 iPhone「設定 → 通知 → 資料查詢」打開。' : '還沒開啟推播。';
+}
+$('pushOn').addEventListener('click', async () => {
+  try {
+    if (!('PushManager' in window)) throw new Error('請先把 App 加到主畫面，再從主畫面打開');
+    const perm = await Notification.requestPermission();
+    if (perm !== 'granted') throw new Error('沒有允許通知');
+    const reg = await navigator.serviceWorker.ready;
+    const { key } = await api('/push/key');
+    const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlB64ToUint8(key) });
+    await api('/push/subscribe', { method: 'POST', body: JSON.stringify({ sub: sub.toJSON(), device: navigator.userAgent.includes('iPhone') ? 'iPhone' : '手機' }) });
+    toast('已開啟推播'); $('pushInfo').textContent = await pushState();
+  } catch (e) { toast(`開啟失敗：${e.message}`); }
+});
+$('pushTest').addEventListener('click', async () => { try { const r = await api('/push/test', { method: 'POST' }); toast(r.total ? `已送出（${r.sent}/${r.total} 台裝置）` : '還沒有裝置開啟推播'); } catch (e) { toast(e.message); } });
+$('pushOff').addEventListener('click', async () => {
+  const reg = await navigator.serviceWorker.getRegistration(), sub = await reg?.pushManager.getSubscription();
+  if (sub) { await api('/push/unsubscribe', { method: 'POST', body: JSON.stringify({ endpoint: sub.endpoint }) }).catch(() => {}); await sub.unsubscribe(); }
+  toast('已關閉推播'); $('pushInfo').textContent = await pushState();
 });
 
 // ---------- 排行 ----------
@@ -451,16 +701,18 @@ function syncMvUi() {
 // ---------- 同步 ----------
 let syncT = null, syncing = false, lastSync = null;   // 資料庫開好後才讀取
 function localDoc() {
-  const doc = { watchlist: {}, holdings: {}, alerts: {} };
+  const doc = { watchlist: {}, holdings: {}, alerts: {}, sells: {} };
   for (const w of DB.all('SELECT * FROM watchlist')) doc.watchlist[w.code] = { order: w.sort_order };
-  for (const h of DB.all('SELECT * FROM holdings')) doc.holdings[h.uid] = { code: h.code, buy_date: h.buy_date, shares: h.shares, price: h.price, fee: h.fee, note: h.note || null };
+  for (const h of DB.all('SELECT * FROM holdings')) doc.holdings[h.uid] = { code: h.code, buy_date: h.buy_date, shares: h.shares, price: h.price, fee: h.fee, note: h.note || null, stop: h.stop_price ?? null, take: h.take_price ?? null };
   for (const a of DB.all('SELECT * FROM alerts')) doc.alerts[a.uid] = { code: a.code, direction: a.direction, price: a.price, created_at: a.created_at, triggered_at: a.triggered_at || null, hit_price: a.hit_price ?? null };
+  for (const x of DB.all('SELECT * FROM sells')) doc.sells[x.uid] = { code: x.code, sell_date: x.sell_date, shares: x.shares, price: x.price, fee: x.fee, tax: x.tax, buy_date: x.buy_date, buy_price: x.buy_price, buy_fee: x.buy_fee, note: x.note || null };
   return doc;
 }
 function applyDoc(doc) {
   DB.batch(run => {
     run('DELETE FROM watchlist'); for (const [code, w] of Object.entries(doc.watchlist || {})) run('INSERT INTO watchlist (code, sort_order) VALUES (?, ?)', [code, w.order]);
-    run('DELETE FROM holdings'); for (const [uid, h] of Object.entries(doc.holdings || {})) run('INSERT INTO holdings (uid, code, buy_date, shares, price, fee, note) VALUES (?, ?, ?, ?, ?, ?, ?)', [uid, h.code, h.buy_date, h.shares, h.price, h.fee, h.note]);
+    run('DELETE FROM holdings'); for (const [uid, h] of Object.entries(doc.holdings || {})) run('INSERT INTO holdings (uid, code, buy_date, shares, price, fee, note, stop_price, take_price) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)', [uid, h.code, h.buy_date, h.shares, h.price, h.fee, h.note, h.stop ?? null, h.take ?? null]);
+    run('DELETE FROM sells'); for (const [uid, x] of Object.entries(doc.sells || {})) run('INSERT INTO sells (uid, code, sell_date, shares, price, fee, tax, buy_date, buy_price, buy_fee, note) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', [uid, x.code, x.sell_date, x.shares, x.price, x.fee, x.tax, x.buy_date, x.buy_price, x.buy_fee, x.note]);
     run('DELETE FROM alerts'); for (const [uid, a] of Object.entries(doc.alerts || {})) run('INSERT INTO alerts (uid, code, direction, price, created_at, triggered_at, hit_price) VALUES (?, ?, ?, ?, ?, ?, ?)', [uid, a.code, a.direction, a.price, a.created_at, a.triggered_at, a.hit_price]);
   });
 }
@@ -620,6 +872,7 @@ function renderSettings() {
   $('sRate').value = S.rate; $('sDisc').value = S.disc; $('sMin').value = S.minFee;
   $('syncInfo').textContent = lastSync ? `已和電腦版同步：${lastSync}` : '還沒同步過';
   $('sVer').textContent = `版本 ${APP_VERSION}・股票清單 ${STOCKS.length} 檔（${DB.meta('stocks_date') || '—'}）`;
+  pushState().then(t => { $('pushInfo').textContent = t; });
 }
 $('sTheme').addEventListener('click', e => { const b = e.target.closest('[data-v]'); if (b) { setS('theme', b.dataset.v); applyTheme(); renderIndex(); } });
 $('sInt').addEventListener('change', e => { setS('interval', Number(e.target.value)); startTimer(); });
@@ -634,6 +887,8 @@ async function afterSetup() {
   await syncNow();
   startTimer();
   go(view);
+  const code = new URLSearchParams(location.search).get('code');
+  if (code && stockMap.has(code)) { history.replaceState(null, '', location.pathname); openStock(code); }
 }
 (async () => {
   try {

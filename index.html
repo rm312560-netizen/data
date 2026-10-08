@@ -44,6 +44,10 @@
         <button data-ft="ret" aria-pressed="false">報酬</button>
         <button data-ft="eps" aria-pressed="false">獲利</button>
         <button data-ft="hold" aria-pressed="false" hidden>持股</button>
+        <button data-ft="chips" aria-pressed="false" data-alt="資金">籌碼</button>
+        <button data-ft="rev" aria-pressed="false" data-alt="營運">營收</button>
+        <button data-ft="news" aria-pressed="false">公告</button>
+        <button data-ft="bt" aria-pressed="false" data-alt="模擬">回測</button>
         <button data-ft="calc" aria-pressed="false">試算</button>
       </div>
       <div id="fBody" class="panel"></div>
@@ -63,6 +67,10 @@
     </form>
     <div id="hSum" class="cards"></div>
     <div id="holds" class="list"></div>
+    <details class="panel more" id="pDiv"><summary data-alt="日程">除權息行事曆</summary><div class="mbody"></div></details>
+    <details class="panel more" id="pYear"><summary data-alt="年度">年度損益與股利</summary><div class="mbody"></div></details>
+    <details class="panel more" id="pPf"><summary data-alt="分布">投資組合分析</summary><div class="mbody"></div></details>
+    <details class="panel more" id="pNews"><summary>重大訊息</summary><div class="mbody"></div></details>
   </section>
 
   <!-- 排行 -->
@@ -109,6 +117,11 @@
       <div class="row"><span>手續費率</span><span><input id="sRate" inputmode="decimal" class="num"> %</span></div>
       <div class="row"><span>折扣</span><span><input id="sDisc" inputmode="decimal" class="num"> 折</span></div>
       <div class="row"><span>最低手續費</span><span><input id="sMin" inputmode="decimal" class="num"> 元</span></div>
+    </div>
+    <h2 class="sub">推播通知</h2>
+    <div class="panel set">
+      <p class="muted small" id="pushInfo">到價提醒、停損停利、除息前一天，會用 iPhone 通知告訴你（App 沒開也收得到）。要先把 App 加到主畫面。</p>
+      <div class="btnrow"><button class="btn" id="pushOn">開啟推播</button><button class="btn" id="pushTest">送測試通知</button><button class="btn" id="pushOff">關閉</button></div>
     </div>
     <h2 class="sub">同步</h2>
     <div class="panel set">
