@@ -1,5 +1,5 @@
 // 資料查詢（手機版）：大盤、自選股、查詢與基本資料、試算、持股、排行、到價提醒；與電腦版同步
-const APP_VERSION = '1.3.0';
+const APP_VERSION = '1.4.0';
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmt = (n, d = 0) => Number(n).toLocaleString('zh-TW', { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -298,6 +298,7 @@ function priceNow() { return Q[cur?.code]?.price || cur?.close; }
 function renderFund() {
   document.querySelectorAll('[data-ft]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.ft === fTab)));
   if (fTab === 'calc') { $('fBody').innerHTML = calcHtml(); bindCalc(); return; }
+  if (fTab === 'talk') { forumTab(cur.code); return; }
   if (['chips', 'rev', 'news', 'bt'].includes(fTab)) { fundExtra(cur.code, fTab); return; }
   if (!FUND) return;
   const F = FUND, price = priceNow(), body = $('fBody');
@@ -394,6 +395,50 @@ async function fundExtra(code, tab) {
   }
   if (tab === 'news') body.innerHTML = newsHtml(d, '近 30 天沒有重大訊息（電腦版開著時才會更新這份資料）。');
 }
+// ---------- 討論：Yahoo 股市留言、PTT Stock 版、電腦版上傳的 AI 整理 ----------
+const TALK = { sort: 'createdAt', cache: {} };
+const fmAgo = ts => { const m = Math.round((Date.now() - ts) / 60e3); return m < 1 ? '剛剛' : m < 60 ? `${m} 分鐘前` : m < 1440 ? `${Math.floor(m / 60)} 小時前` : new Date(ts).toLocaleDateString('zh-TW', { month: 'numeric', day: 'numeric' }); };
+const fmMsgs = items => items.map(m => `<div class="fm-msg"><div class="meta"><b>${esc(m.user)}</b><span>${fmAgo(m.ts)}</span>${m.mood ? `<span>${m.mood}</span>` : ''}<span>讚 ${m.up}</span><span>倒讚 ${m.down}</span>${m.replies ? `<span>回覆 ${m.replies}</span>` : ''}</div><div class="txt${m.text.length > 120 ? ' clip' : ''}">${esc(m.text)}</div></div>`).join('');
+async function forumTab(code, force) {
+  const body = $('fBody'), key = `${code}:${TALK.sort}`;
+  const hit = TALK.cache[key];
+  if (!hit || force || Date.now() - hit.at > 120e3) {
+    body.innerHTML = '<p class="empty">載入中…</p>';
+    try { const r = await api(`/forum?code=${code}&sort=${TALK.sort}`); if (r.error) throw new Error(r.error); TALK.cache[key] = { at: Date.now(), r }; }
+    catch (e) { if (fTab === 'talk' && cur?.code === code) body.innerHTML = `<p class="empty">讀取失敗：${esc(e.message)}</p>`; return; }
+  }
+  if (fTab !== 'talk' || cur?.code !== code) return;
+  const { r } = TALK.cache[key], x = r.summary, y = r.yahoo;
+  const t = x ? Math.max(1, x.bull + x.bear + x.neutral) : 1, p = n => (n / t * 100).toFixed(0);
+  body.innerHTML = (x ? `<div class="fm-sum"><b>${esc(x.mood)}</b>
+      <div class="fm-bar"><i style="width:${p(x.bull)}%;background:var(--up)"></i><i style="width:${p(x.bear)}%;background:var(--down)"></i></div>
+      <div class="small"><span class="up">看多 ${p(x.bull)}%</span>・<span class="down">看空 ${p(x.bear)}%</span>・其他 ${p(x.neutral)}%</div>
+      <ul>${(x.topics || []).map(t => `<li><b>${esc(t.topic)}</b>：${esc(t.desc)}</li>`).join('')}</ul>
+      ${x.caution ? `<p class="small" style="margin:6px 0 0">⚠ ${esc(x.caution)}</p>` : ''}
+      <p class="muted small" style="margin:4px 0 0">AI 整理 ${esc(x.at)}（電腦版分析）・網友意見，不是投資建議</p></div>`
+    : '<p class="muted small">還沒有 AI 整理。在電腦版「網友」頁按「AI 分析」，或每天 13:40 自動分析持股與自選股。</p>')
+    + `<div class="fm-sort"><b style="margin-right:auto">Yahoo 股市留言${y.total != null ? ` <span class="muted small">共 ${fmt(y.total)} 則</span>` : ''}</b>
+      <button data-fsort="createdAt" aria-pressed="${TALK.sort === 'createdAt'}">最新</button><button data-fsort="popular" aria-pressed="${TALK.sort === 'popular'}">熱門</button></div>
+    <div id="fmY">${y.error ? `<p class="empty">${esc(y.error)}</p>` : fmMsgs(y.items) || '<p class="empty">還沒有留言。</p>'}</div>
+    ${y.next ? `<button class="btn" id="fmMore" data-next="${esc(y.next)}" style="margin-top:6px">載入更多</button>` : ''}
+    <details class="news" style="margin-top:10px"${r.ptt.length ? '' : ' hidden'}><summary>PTT Stock 版近 30 天（${r.ptt.length} 篇）</summary>
+      ${r.ptt.slice(0, 30).map(q => `<div class="fm-post"><span class="nr${q.nrec === '爆' || +q.nrec >= 30 ? ' b' : ''}">${esc(q.nrec || '')}</span><a href="${esc(q.url)}" target="_blank" rel="noopener">${esc(q.title)}</a><span class="d">${new Date(q.ts).toLocaleDateString('zh-TW', { month: 'numeric', day: 'numeric' })}</span></div>`).join('')}</details>`;
+}
+$('fBody').addEventListener('click', async e => {
+  const s = e.target.closest('[data-fsort]');
+  if (s) { TALK.sort = s.dataset.fsort; forumTab(cur.code); return; }
+  const c = e.target.closest('.fm-msg .txt.clip'); if (c) { c.classList.remove('clip'); return; }
+  if (e.target.id === 'fmMore') {
+    const b = e.target, code = cur.code; b.disabled = true; b.textContent = '載入中…';
+    try {
+      const r = await api(`/forum?code=${code}&sort=${TALK.sort}&index=${encodeURIComponent(b.dataset.next)}`);
+      if (cur?.code !== code || fTab !== 'talk') return;
+      $('fmY').insertAdjacentHTML('beforeend', fmMsgs(r.yahoo.items || []));
+      if (r.yahoo.next) { b.dataset.next = r.yahoo.next; b.disabled = false; b.textContent = '載入更多'; } else b.remove();
+    } catch { b.disabled = false; b.textContent = '載入更多'; }
+  }
+});
+
 function newsHtml(items, empty) {
   return items.length ? items.map(n => `<details class="news"><summary><span class="d">${esc(n.date.slice(5))} ${esc(n.time || '')}・${esc(n.code)} ${esc(n.name || '')}</span><br>${esc(n.subject)}</summary>
     ${n.summary ? `<p><b>AI 摘要：</b>${esc(n.summary)}</p>` : ''}<p class="small">${esc(n.detail || '').replace(/\n/g, '<br>')}</p></details>`).join('') : `<p class="empty small">${empty}</p>`;
