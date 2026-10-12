@@ -1,5 +1,5 @@
 // 資料查詢（手機版）：大盤、自選股、查詢與基本資料、試算、持股、排行、到價提醒；與電腦版同步
-const APP_VERSION = '1.4.0';
+const APP_VERSION = '1.4.1';
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmt = (n, d = 0) => Number(n).toLocaleString('zh-TW', { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -696,7 +696,7 @@ async function pushState() {
   if (!('serviceWorker' in navigator) || !('PushManager' in window)) return '這個瀏覽器不支援推播。iPhone 要 iOS 16.4 以上，而且要從主畫面打開 App。';
   const reg = await navigator.serviceWorker.getRegistration();
   const sub = await reg?.pushManager.getSubscription();
-  return sub ? '已開啟推播：到價提醒、停損停利、除息前一天會通知。' : Notification.permission === 'denied' ? '通知被關閉了，請到 iPhone「設定 → 通知 → 資料查詢」打開。' : '還沒開啟推播。';
+  return sub ? '已開啟推播：到價提醒、停損停利、除息前一天、討論暴增會通知。' : Notification.permission === 'denied' ? '通知被關閉了，請到 iPhone「設定 → 通知 → 資料查詢」打開。' : '還沒開啟推播。';
 }
 $('pushOn').addEventListener('click', async () => {
   try {
@@ -710,6 +710,9 @@ $('pushOn').addEventListener('click', async () => {
     toast('已開啟推播'); $('pushInfo').textContent = await pushState();
   } catch (e) { toast(`開啟失敗：${e.message}`); }
 });
+// 推播選項：討論暴增提醒
+async function loadPushOpts() { try { $('pushForum').checked = (await api('/push/opts')).forum !== false; } catch {} }
+$('pushForum').addEventListener('change', async e => { try { await api('/push/opts', { method: 'PUT', body: JSON.stringify({ forum: e.target.checked }) }); toast(e.target.checked ? '已開啟討論暴增提醒' : '已關閉討論暴增提醒'); } catch (err) { toast(err.message); e.target.checked = !e.target.checked; } });
 $('pushTest').addEventListener('click', async () => { try { const r = await api('/push/test', { method: 'POST' }); toast(r.total ? `已送出（${r.sent}/${r.total} 台裝置）` : '還沒有裝置開啟推播'); } catch (e) { toast(e.message); } });
 $('pushOff').addEventListener('click', async () => {
   const reg = await navigator.serviceWorker.getRegistration(), sub = await reg?.pushManager.getSubscription();
@@ -917,7 +920,7 @@ function renderSettings() {
   $('sRate').value = S.rate; $('sDisc').value = S.disc; $('sMin').value = S.minFee;
   $('syncInfo').textContent = lastSync ? `已和電腦版同步：${lastSync}` : '還沒同步過';
   $('sVer').textContent = `版本 ${APP_VERSION}・股票清單 ${STOCKS.length} 檔（${DB.meta('stocks_date') || '—'}）`;
-  pushState().then(t => { $('pushInfo').textContent = t; });
+  pushState().then(t => { $('pushInfo').textContent = t; }); loadPushOpts();
 }
 $('sTheme').addEventListener('click', e => { const b = e.target.closest('[data-v]'); if (b) { setS('theme', b.dataset.v); applyTheme(); renderIndex(); } });
 $('sInt').addEventListener('change', e => { setS('interval', Number(e.target.value)); startTimer(); });
@@ -933,7 +936,8 @@ async function afterSetup() {
   startTimer();
   go(view);
   const code = new URLSearchParams(location.search).get('code');
-  if (code && stockMap.has(code)) { history.replaceState(null, '', location.pathname); openStock(code); }
+  const tab = new URLSearchParams(location.search).get('tab');
+  if (code && stockMap.has(code)) { if (tab === 'talk') fTab = 'talk'; history.replaceState(null, '', location.pathname); openStock(code); }
 }
 (async () => {
   try {
