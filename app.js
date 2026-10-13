@@ -1,5 +1,5 @@
 // 資料查詢（手機版）：大盤、自選股、查詢與基本資料、試算、持股、排行、到價提醒；與電腦版同步
-const APP_VERSION = '1.4.1';
+const APP_VERSION = '1.4.2';
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmt = (n, d = 0) => Number(n).toLocaleString('zh-TW', { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -343,15 +343,48 @@ function renderFund() {
     const h = F.hold;
     if (!h) { body.innerHTML = '<p class="empty">查不到持股資料。</p>' + err; return; }
     const top10 = h.list.slice(0, 10).reduce((a, x) => a + x.weight, 0), max = Math.max(...h.list.map(x => x.weight), 0.01);
-    const shown = holdAll ? h.list : h.list.slice(0, 20);
-    body.innerHTML = `<div class="cards"><div class="card"><span>持股檔數</span><b>${fmt(h.list.length)}${h.full ? '' : '+'}</b></div><div class="card"><span>前十大合計</span><b>${fmt(top10, 1)}%</b></div></div>
+    // 成分股漲跌幅、對 ETF 的影響（比重 × 漲跌幅）
+    const codes = h.list.map(x => x.twCode).filter(Boolean);
+    if (codes.length && (HQ.etf !== cur.code || Date.now() - HQ.at > 30e3)) loadHoldQuotes(cur.code, codes);
+    const qm = HQ.etf === cur.code ? HQ.map : new Map();
+    const rows0 = h.list.map((x, i) => { const q = qm.get(x.twCode), c = q?.price && q.prevClose ? (q.price - q.prevClose) / q.prevClose * 100 : null; return { ...x, rank: i + 1, c, eff: c != null ? x.weight * c / 100 : null }; });
+    const known = rows0.filter(x => x.c != null), cover = known.reduce((a, x) => a + x.weight, 0), effSum = known.reduce((a, x) => a + x.eff, 0);
+    const ups = known.filter(x => x.c > 0).length, downs = known.filter(x => x.c < 0).length;
+    const byEff = [...known].sort((a, b) => b.eff - a.eff), top = byEff.filter(x => x.eff > 0).slice(0, 3), bot = byEff.filter(x => x.eff < 0).slice(-3).reverse();
+    const sorted = holdSort === 'w' ? rows0 : [...rows0].sort((a, b) => holdSort === 'up' ? (b.c ?? -1e9) - (a.c ?? -1e9) : holdSort === 'down' ? (a.c ?? 1e9) - (b.c ?? 1e9) : Math.abs(b.eff ?? 0) - Math.abs(a.eff ?? 0));
+    const shown = holdAll ? sorted : sorted.slice(0, 20);
+    const effName = x => `${esc(x.name)} ${pctTxt(x.eff, 2)}`;
+    body.innerHTML = `<div class="cards"><div class="card"><span>持股檔數</span><b>${fmt(h.list.length)}${h.full ? '' : '+'}</b></div><div class="card"><span>前十大合計</span><b>${fmt(top10, 1)}%</b></div>
+      ${codes.length ? `<div class="card"><span>成分股加權漲跌</span><b class="${cls(effSum)}">${known.length ? pctTxt(cover ? effSum / cover * 100 : null, 2) : '…'}</b><span>漲 ${ups}・跌 ${downs}</span></div>` : ''}</div>
+      ${known.length ? `<p class="small" style="margin:6px 0">${top.length ? `拉抬：${top.map(effName).join('、')}` : ''}${top.length && bot.length ? '<br>' : ''}${bot.length ? `拖累：${bot.map(effName).join('、')}` : ''}</p>` : ''}
       ${h.alloc ? `<p class="small muted">股票 ${fmt(h.alloc.stock, 1)}%・債券 ${fmt(h.alloc.bond, 1)}%・現金 ${fmt(h.alloc.cash, 1)}%</p>` : ''}
-      <div class="twrap"><table class="tbl"><tr><th>#</th><th>名稱</th><th>比重</th></tr>
-      ${shown.map((x, i) => `<tr><td>${i + 1}</td><td>${x.twCode ? `<button class="linkish" data-open="${x.twCode}">${esc(x.name)}</button>` : esc(x.name)}</td><td><span class="wbar"><i style="width:${x.weight / max * 100}%"></i></span>${fmt(x.weight, 2)}%</td></tr>`).join('')}</table></div>
+      ${codes.length ? `<div class="seg" style="margin:6px 0">${[['w', '比重'], ['up', '漲幅'], ['down', '跌幅'], ['eff', '影響']].map(([k, t]) => `<button data-hsort="${k}" aria-pressed="${holdSort === k}">${t}</button>`).join('')}</div>` : ''}
+      <div class="twrap"><table class="tbl"><tr><th>#</th><th>名稱</th><th>比重</th>${codes.length ? '<th>漲跌</th><th>影響</th>' : ''}</tr>
+      ${shown.map(x => `<tr><td>${x.rank}</td><td>${x.twCode ? `<button class="linkish" data-open="${x.twCode}">${esc(x.name)}</button>` : esc(x.name)}</td><td><span class="wbar"><i style="width:${x.weight / max * 100}%"></i></span>${fmt(x.weight, 2)}%</td>${codes.length ? `<td class="${cls(x.c)}">${x.c != null ? pctTxt(x.c, 2) : '—'}</td><td class="${cls(x.eff)}">${x.eff != null ? pctTxt(x.eff, 2) : '—'}</td>` : ''}</tr>`).join('')}</table></div>
+      ${known.length ? `<p class="muted small">影響＝比重 × 漲跌幅（這檔讓 ETF 漲跌多少）・${HQ.at ? new Date(HQ.at).toLocaleTimeString('zh-TW', { hour12: false }) : ''} 報價${cover < 99 ? `・涵蓋 ${fmt(cover, 1)}% 持股` : ''}</p>` : ''}
       ${h.list.length > 20 ? `<button class="btn" id="holdMore" style="margin-top:8px">${holdAll ? '只顯示前 20 檔' : `顯示全部 ${fmt(h.list.length)} 檔`}</button>` : ''}
       <p class="muted small">${esc(h.source)}・${esc(h.date || '')}</p>${err}`;
   }
 }
+// 成分股即時報價：打開「持股」時抓（轉接站一次最多 60 檔），開盤時間每 30 秒更新
+let holdSort = 'w';
+const HQ = { etf: null, at: 0, map: new Map(), loading: false };
+async function loadHoldQuotes(etf, codes) {
+  if (HQ.loading) return;
+  HQ.loading = true;
+  try {
+    const map = new Map();
+    for (let i = 0; i < codes.length; i += 60) for (const q of (await api(`/quote?codes=${codes.slice(i, i + 60).join(',')}`)).quotes || []) map.set(q.code, q);
+    Object.assign(HQ, { etf, at: Date.now(), map });
+  } catch {}
+  finally { HQ.loading = false; }
+  if (cur?.code === etf && fTab === 'hold') renderFund();
+}
+setInterval(() => {
+  const t = new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Taipei' }), hm = t.slice(11, 16), dow = new Date(`${t.slice(0, 10)}T12:00:00+08:00`).getUTCDay();
+  if (fTab === 'hold' && FUND?.etf && !document.hidden && hm >= '09:00' && hm <= '13:35' && dow >= 1 && dow <= 5) { HQ.at = 0; renderFund(); }
+}, 30e3);
+
 // ---------- 籌碼、營收、公告、回測 ----------
 const EXTRA = {};
 const lotsTxt = v => `<span class="${cls(v)}">${v > 0 ? '+' : v < 0 ? '-' : ''}${fmt(Math.abs(v))}</span>`;
@@ -488,6 +521,7 @@ $('fTabs').addEventListener('click', e => { const b = e.target.closest('[data-ft
 $('fBody').addEventListener('click', e => {
   const r = e.target.closest('[data-fr]'); if (r) { fRange = r.dataset.fr; renderFund(); return; }
   if (e.target.id === 'holdMore') { holdAll = !holdAll; renderFund(); return; }
+  const hs = e.target.closest('[data-hsort]'); if (hs) { holdSort = hs.dataset.hsort; renderFund(); return; }
   const o = e.target.closest('[data-open]'); if (o) openStock(o.dataset.open);
 });
 
