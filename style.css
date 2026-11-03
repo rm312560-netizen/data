@@ -275,6 +275,28 @@ body.stealth .rk .tag { background: none; color: var(--fg); border-color: var(--
 .rk.lv3 .tx, .rk.lv2 .tx { color: var(--fg); }
 .rk.lv1 .tx, .rk.lv0 .tx { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .risk-box .rk-more { border: 0; background: none; color: var(--muted); font-size: .8rem; padding: 6px 0 2px; }
+/* 小功能 */
+.x-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 2px 10px; padding: 7px 0; border-top: 1px solid var(--line); font-size: .84rem; align-items: baseline; }
+.x-row.me { font-weight: 600; }
+.x-row .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.x-row .nm small { color: var(--muted); font-family: var(--num); margin-right: 4px; }
+.x-row .v { font-family: var(--num); text-align: right; white-space: nowrap; }
+.x-row .sub { grid-column: 1 / -1; font-size: .74rem; color: var(--muted); }
+.heat { display: inline-block; width: 13px; height: 11px; border-radius: 2px; vertical-align: middle; margin-right: 1px; }
+.x-bar { display: grid; grid-template-columns: 3.6em minmax(0, 1fr) 5.6em; gap: 6px; align-items: center; font-size: .82rem; padding: 3px 0; }
+.x-bar .b { height: 12px; background: var(--fg); border-radius: 2px; }
+.x-bar .b.est { opacity: .45; }
+.x-bar .v { text-align: right; font-family: var(--num); }
+.x-bar .d { grid-column: 2 / -1; font-size: .72rem; color: var(--muted); }
+.jr-f { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin-bottom: 8px; }
+.jr-f input, .jr-f select, .jr-f textarea, .jr-i textarea { width: 100%; min-width: 0; padding: 6px 8px; }
+.jr-f textarea { grid-column: 1 / -1; min-height: 3.2em; }
+.jr-f .btn { grid-column: 1 / -1; }
+.jr-i { border-top: 1px solid var(--line); padding: 8px 0; font-size: .85rem; display: grid; gap: 4px; }
+.jr-i .h { display: flex; gap: 8px; flex-wrap: wrap; align-items: baseline; }
+.jr-i .h .x { margin-left: auto; border: 0; background: none; color: var(--muted); font-size: 1.1rem; }
+.jr-i textarea { min-height: 2.4em; font-size: 16px; }
+.etf-nav { font-size: .8rem; color: var(--muted); margin-top: 6px; }
 /* 法人籌碼 */
 .ch-ctl { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 6px; }
 .ch-ctl select { font-size: 16px; padding: 5px 8px; }
