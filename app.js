@@ -1,5 +1,5 @@
 // 資料查詢（手機版）：大盤、自選股、查詢與基本資料、試算、持股、排行、到價提醒；與電腦版同步
-const APP_VERSION = '1.5.2';
+const APP_VERSION = '1.5.3';
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmt = (n, d = 0) => Number(n).toLocaleString('zh-TW', { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -883,10 +883,10 @@ $('pushOn').addEventListener('click', async () => {
   } catch (e) { toast(`開啟失敗：${e.message}`); }
 });
 // 推播選項：討論暴增提醒
-async function loadPushOpts() { try { const o = await api('/push/opts'); $('pushForum').checked = o.forum !== false; $('pushRisk').checked = o.risk !== false; $('pushBrief').checked = o.brief !== false; $('pushClose').checked = o.close !== false; } catch {} }
-for (const [id, name] of [['pushForum', '討論暴增提醒'], ['pushRisk', '持股風險提醒'], ['pushBrief', '盤前早報'], ['pushClose', '收盤日報']]) {
+async function loadPushOpts() { try { const o = await api('/push/opts'); $('pushForum').checked = o.forum !== false; $('pushRisk').checked = o.risk !== false; $('pushBrief').checked = o.brief !== false; $('pushClose').checked = o.close !== false; $('pushMove').checked = o.move !== false; } catch {} }
+for (const [id, name] of [['pushForum', '討論暴增提醒'], ['pushRisk', '持股風險提醒'], ['pushBrief', '盤前早報'], ['pushClose', '收盤日報'], ['pushMove', '盤中異動提醒']]) {
   $(id).addEventListener('change', async e => {
-    try { await api('/push/opts', { method: 'PUT', body: JSON.stringify({ forum: $('pushForum').checked, risk: $('pushRisk').checked, brief: $('pushBrief').checked, close: $('pushClose').checked }) }); toast(`已${e.target.checked ? '開啟' : '關閉'}${name}`); }
+    try { await api('/push/opts', { method: 'PUT', body: JSON.stringify({ forum: $('pushForum').checked, risk: $('pushRisk').checked, brief: $('pushBrief').checked, close: $('pushClose').checked, move: $('pushMove').checked }) }); toast(`已${e.target.checked ? '開啟' : '關閉'}${name}`); }
     catch (err) { toast(err.message); e.target.checked = !e.target.checked; }
   });
 }
