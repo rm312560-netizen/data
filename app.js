@@ -1,5 +1,5 @@
 // 資料查詢（手機版）：大盤、自選股、查詢與基本資料、試算、持股、排行、到價提醒；與電腦版同步
-const APP_VERSION = '1.4.3';
+const APP_VERSION = '1.4.4';
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmt = (n, d = 0) => Number(n).toLocaleString('zh-TW', { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -14,7 +14,7 @@ function loadSettings() {
     apiBase: DB.setting('apiBase', (window.APP_CONFIG && APP_CONFIG.apiBase) || ''), token: DB.setting('token', ''),
     theme: DB.setting('theme', 'stealth'), interval: DB.setting('interval', 5), marketOnly: DB.setting('marketOnly', true),
     rate: DB.setting('rate', 0.1425), disc: DB.setting('disc', 6), minFee: DB.setting('minFee', 20),
-    mvType: DB.setting('mvType', 'stock'), mvVol: DB.setting('mvVol', 500), mvCap: DB.setting('mvCap', 0),
+    mvType: DB.setting('mvType', 'stock'), mvVol: DB.setting('mvVol', 500), mvCap: DB.setting('mvCap', 0), mvMore: DB.setting('mvMore', false),
     qmode: DB.setting('qmode', 'lot'),          // 報價顯示：lot 整股（張）／odd 零股（股）
   });
 }
@@ -756,6 +756,9 @@ $('pushOff').addEventListener('click', async () => {
 
 // ---------- 排行 ----------
 let mvSide = 'up', MV = null, mvAt = 0, VR = null, vrAt = 0;
+// 預設顯示 10 名，「顯示更多」展開到 50 名（轉接站一次給 50 名，切換不用重抓）
+const mvN = () => S.mvMore ? 50 : 10;
+function mvMoreBtn(total) { const b = $('mvMore'); b.hidden = total <= 10; b.textContent = S.mvMore ? '▲ 收合' : `▼ 顯示更多（到 ${Math.min(50, total)} 名）`; }
 // 成交量排行（股票／ETF／全部，依上方類型切換）
 async function loadVol(force) {
   if (!force && VR && Date.now() - vrAt < 30e3) return renderVol();
@@ -765,7 +768,8 @@ async function loadVol(force) {
 }
 function renderVol() {
   if (!VR || mvSide !== 'vol') return;
-  const list = VR[S.mvType] || [];
+  const all = VR[S.mvType] || [], list = all.slice(0, mvN());
+  mvMoreBtn(all.length);
   $('movers').innerHTML = list.length ? list.map((x, i) => `<div class="li" data-code="${x.code}"><span class="nm"><small>${i + 1}. ${x.code}</small>${esc(x.name)}</span><span class="p">${fmt(x.price, 2)}</span><span class="c ${cls(x.pct)}">${pctTxt(x.pct)}</span>
     <span class="sub">成交 <b>${fmt(x.volume)}</b> 張${x.value != null ? `・成交值 ${fmt(x.value, 1)} 億` : ''}</span></div>`).join('') : '<p class="empty">沒有資料</p>';
   $('mvMeta').textContent = `${VR.time ? new Date(VR.time).toLocaleTimeString('zh-TW', { hour12: false }) + ' 更新・' : ''}${{ stock: '只看股票', etf: '只看 ETF', all: '股票與 ETF 一起排' }[S.mvType] || ''}・上市上櫃一起排名`;
@@ -780,11 +784,13 @@ async function loadMovers(force) {
 function renderMovers() {
   if (mvSide === 'vol') return renderVol();
   if (!MV) return;
-  const list = MV[mvSide] || [];
+  const all = MV[mvSide] || [], list = all.slice(0, mvN());
+  mvMoreBtn(all.length);
   $('movers').innerHTML = list.length ? list.map((x, i) => `<div class="li" data-code="${x.code}"><span class="nm"><small>${i + 1}. ${x.code}</small>${esc(x.name)}</span><span class="p">${fmt(x.price, 2)}</span><span class="c ${cls(x.pct)}">${pctTxt(x.pct)}</span>
     <span class="sub">成交 ${fmt(x.volume)} 張${x.cap != null ? `・市值 ${capTxt(x.cap)}` : ''}</span></div>`).join('') : '<p class="empty">沒有符合條件的股票</p>';
   $('mvMeta').textContent = `${MV.time ? new Date(MV.time).toLocaleTimeString('zh-TW', { hour12: false }) + ' 更新・' : ''}排除成交量未滿 ${fmt(S.mvVol)} 張${S.mvCap && S.mvType !== 'etf' ? `、市值未滿 ${fmt(S.mvCap)} 億` : ''}`;
 }
+$('mvMore').addEventListener('click', () => { setS('mvMore', !S.mvMore); renderMovers(); if (!S.mvMore) $('v-movers').scrollIntoView(); });
 $('movers').addEventListener('click', e => { const r = e.target.closest('[data-code]'); if (r) openStock(r.dataset.code); });
 $('mvType').addEventListener('click', e => { const b = e.target.closest('[data-t]'); if (!b) return; setS('mvType', b.dataset.t); syncMvUi(); mvSide === 'vol' ? renderVol() : loadMovers(true); });
 $('mvSide').addEventListener('click', e => { const b = e.target.closest('[data-s]'); if (!b) return; mvSide = b.dataset.s; syncMvUi(); loadMovers(); });

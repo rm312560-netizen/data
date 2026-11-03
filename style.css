@@ -206,3 +206,5 @@ svg.btc { width: 100%; height: 140px; display: block; }
 .fm-post .nr.b { color: var(--accent); font-weight: 700; }
 .fm-post a { color: inherit; text-decoration: none; flex: 1; }
 .fm-post .d { flex: none; font-size: .74rem; color: var(--muted); }
+
+.more-btn { display: block; width: 100%; margin-top: 8px; padding: 10px 12px; border-style: dashed; color: var(--muted); }
