@@ -1,5 +1,5 @@
 // 資料查詢（手機版）：大盤、自選股、查詢與基本資料、試算、持股、排行、到價提醒；與電腦版同步
-const APP_VERSION = '1.4.9';
+const APP_VERSION = '1.5.0';
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmt = (n, d = 0) => Number(n).toLocaleString('zh-TW', { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -15,6 +15,7 @@ function loadSettings() {
     theme: DB.setting('theme', 'stealth'), interval: DB.setting('interval', 5), marketOnly: DB.setting('marketOnly', true),
     rate: DB.setting('rate', 0.1425), disc: DB.setting('disc', 6), minFee: DB.setting('minFee', 20),
     mvType: DB.setting('mvType', 'stock'), mvVol: DB.setting('mvVol', 500), mvCap: DB.setting('mvCap', 0), mvMore: DB.setting('mvMore', false),
+    eqMode: DB.setting('eqMode', 'ret'), eqRange: DB.setting('eqRange', 'all'),
     indSort: DB.setting('indSort', 'pct'), scr: DB.setting('scr', null), scrOpen: DB.setting('scrOpen', false),   // 產業排序、選股條件
     qmode: DB.setting('qmode', 'lot'),          // 報價顯示：lot 整股（張）／odd 零股（股）
   });
@@ -785,7 +786,51 @@ async function renderNewsPanel(box) {
     box.innerHTML = newsHtml((r.items || []).filter(n => codes.has(n.code)), '近 30 天持股與自選股沒有重大訊息。') + (r.at ? `<p class="muted small">電腦版整理於 ${esc(r.at.slice(5, 16))}</p>` : '');
   } catch (e) { box.innerHTML = `<p class="empty small">讀取失敗：${esc(e.message)}</p>`; }
 }
-for (const [id, fn] of [['pDiv', renderDivPanel], ['pYear', renderYearPanel], ['pPf', renderPfPanel], ['pNews', renderNewsPanel]]) {
+// 資產走勢（轉接站用同步的持股、賣出紀錄回推）
+let EQ = null, EQC = null;
+async function renderEqPanel(b) {
+  EQ = await api('/equity'); EQC?.destroy(); EQC = null;
+  if (EQ.empty) { b.innerHTML = '<p class="empty small">還沒有持股紀錄。</p>'; return; }
+  b.innerHTML = `<div class="eq-ctl"><div class="seg" id="eqMode"><button data-m="ret">報酬率</button><button data-m="amt">金額</button></div>
+    <div class="seg" id="eqRange"><button data-r="1m">1月</button><button data-r="3m">3月</button><button data-r="1y">1年</button><button data-r="all">全部</button></div></div>
+    <div class="eq-tiles" id="eqTiles"></div><div id="eqChart"></div>
+    <p class="muted small">用買進日與賣出紀錄回推每天的持股，報酬率是時間加權（扣掉資金進出），可以和 0050（含息）、加權指數公平比較。「同樣的錢買 0050」是每次買賣改成 0050、配息再投入。</p>`;
+  b.querySelector('.eq-ctl').addEventListener('click', e => {
+    const m = e.target.closest('[data-m]'), r = e.target.closest('[data-r]');
+    if (m) setS('eqMode', m.dataset.m); if (r) setS('eqRange', r.dataset.r);
+    if (m || r) drawEq();
+  });
+  drawEq();
+}
+function drawEq() {
+  const mode = S.eqMode || 'ret', range = S.eqRange || 'all';
+  document.querySelectorAll('#eqMode button').forEach(x => x.setAttribute('aria-pressed', String(x.dataset.m === mode)));
+  document.querySelectorAll('#eqRange button').forEach(x => x.setAttribute('aria-pressed', String(x.dataset.r === range)));
+  const months = { '1m': 1, '3m': 3, '1y': 12 }[range];
+  let i0 = 0;
+  if (months) { const d = new Date(); d.setMonth(d.getMonth() - months); const cut = d.toLocaleDateString('sv-SE'); i0 = Math.max(0, EQ.t.findIndex(t => t >= cut)); }
+  const base = Math.max(0, i0 - 1), sl = a => a.slice(i0);
+  const rb = a => i0 ? sl(a).map(v => v == null || a[base] == null ? null : ((1 + v / 100) / (1 + a[base] / 100) - 1) * 100) : sl(a);
+  const st = document.body.classList.contains('stealth'), css = n => getComputedStyle(document.body).getPropertyValue(n).trim(), fg = css('--fg'), mu = css('--muted');
+  const series = mode === 'ret' ? [
+    { name: '我的', data: rb(EQ.twr), color: fg, width: 2 },
+    { name: '0050含息', data: rb(EQ.b0050), color: st ? mu : '#3b82f6', dash: st ? [5, 3] : null },
+    { name: '加權', data: rb(EQ.twii), color: st ? mu : '#f59e0b', dash: st ? [2, 3] : null },
+  ] : [
+    { name: '市值', data: sl(EQ.value), color: fg, width: 2, fill: true },
+    { name: '成本', data: sl(EQ.cost), color: mu, dash: [5, 3] },
+    { name: '買0050', data: sl(EQ.sim), color: st ? mu : '#3b82f6', dash: st ? [2, 3] : null },
+  ];
+  if (!EQC) EQC = LineChart($('eqChart'), { height: 220, colors: () => ({ fg, muted: mu, line: css('--line') }) });
+  EQC.set({ t: sl(EQ.t), series, zero: mode === 'ret', fmt: mode === 'ret' ? (v, ax) => `${v > 0 && !ax ? '+' : ''}${fmt(v, ax ? 1 : 2)}%` : (v, ax) => ax ? (Math.abs(v) >= 1e4 ? `${fmt(v / 1e4, 1)}萬` : fmt(v)) : fmt(v) });
+  const m = EQ.summary, pc = v => v == null ? '—' : `<span class="${cls(v)}">${pctTxt(v)}</span>`;
+  $('eqTiles').innerHTML = `<div><span>目前市值</span><b>${fmt(m.value)}</b><small>成本 ${fmt(m.cost)}</small></div>
+    <div><span>總損益（含已實現、股利）</span><b class="${cls(m.pl)}">${m.pl > 0 ? '+' : ''}${fmt(m.pl)}</b><small>股利 ${fmt(m.divs)}</small></div>
+    <div><span>我的報酬（時間加權）</span><b>${pc(m.twr)}</b><small>從 ${m.start.slice(2).replace(/-/g, '/')} 起</small></div>
+    <div><span>同期 0050（含息）</span><b>${pc(m.b0050)}</b><small>${m.twr != null && m.b0050 != null ? (m.twr >= m.b0050 ? `贏 ${fmt(m.twr - m.b0050, 2)} 點` : `輸 ${fmt(m.b0050 - m.twr, 2)} 點`) : ''}</small></div>
+    <div><span>同期加權指數</span><b>${pc(m.twii)}</b></div><div><span>最大回檔</span><b>${pc(m.mdd)}</b></div>`;
+}
+for (const [id, fn] of [['pEq', renderEqPanel], ['pDiv', renderDivPanel], ['pYear', renderYearPanel], ['pPf', renderPfPanel], ['pNews', renderNewsPanel]]) {
   $(id).addEventListener('toggle', () => { if ($(id).open) { const b = $(id).querySelector('.mbody'); b.innerHTML = '<p class="empty small">載入中…</p>'; fn(b).catch(e => { b.innerHTML = `<p class="empty small">${esc(e.message)}</p>`; }); } });
 }
 

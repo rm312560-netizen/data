@@ -301,4 +301,59 @@
 .kc-info .kc-ma { font-size: .74rem; }
 .kc-msg { color: var(--muted); font-size: .85rem; padding: 8px 0; }
 .kc-cv { cursor: crosshair; user-select: none; -webkit-user-select: none; }`;
+
+  // ---------- 折線圖（資產走勢用）：c.set({ t, series: [{ name, data, color, dash, width }], fmt, zero }) ----------
+  window.LineChart = function (root, opt) {
+    if (!document.getElementById('kc-style')) { const el = document.createElement('style'); el.id = 'kc-style'; el.textContent = KChart.css; document.head.appendChild(el); }
+    const H = opt.height || 260, RG = 64;
+    root.innerHTML = `<div class="kc-info"></div><canvas class="kc-cv" style="width:100%;height:${H}px;display:block;touch-action:pan-y"></canvas>`;
+    const cv = root.querySelector('canvas'), info = root.querySelector('.kc-info');
+    let S = null, hover = -1;
+    function draw() {
+      if (!S || !S.t.length) return;
+      const W = cv.clientWidth; if (!W) return;
+      const dpr = window.devicePixelRatio || 1;
+      cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+      const g = cv.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
+      const C = opt.colors(), pw = W - RG, top = 8, bot = H - 18, n = S.t.length;
+      const vals = S.series.flatMap(s => s.data.filter(v => v != null));
+      let hi = Math.max(...vals), lo = Math.min(...vals);
+      if (S.zero) { hi = Math.max(hi, 0); lo = Math.min(lo, 0); }
+      const pad = (hi - lo) * 0.08 || Math.abs(hi) * 0.02 || 1; hi += pad; lo -= pad;
+      const X = i => n === 1 ? pw / 2 : i / (n - 1) * (pw - 8) + 4, Y = v => top + (hi - v) / (hi - lo) * (bot - top);
+      g.font = '11px ui-monospace, Consolas, monospace'; g.lineWidth = 1;
+      for (let k = 0; k <= 4; k++) {
+        const v = hi - (hi - lo) * k / 4, y = Math.round(Y(v)) + 0.5;
+        g.strokeStyle = C.line; g.globalAlpha = 0.6; g.beginPath(); g.moveTo(0, y); g.lineTo(pw, y); g.stroke(); g.globalAlpha = 1;
+        g.fillStyle = C.muted; g.textAlign = 'right'; g.fillText(S.fmt(v, true), W - 2, y + 4);
+      }
+      if (S.zero && lo < 0 && hi > 0) { g.strokeStyle = C.muted; g.beginPath(); g.moveTo(0, Math.round(Y(0)) + 0.5); g.lineTo(pw, Math.round(Y(0)) + 0.5); g.stroke(); }
+      // 日期：最多約 6 個
+      g.fillStyle = C.muted; g.textAlign = 'center';
+      const step = Math.max(1, Math.ceil(n / Math.max(2, Math.floor(pw / 90))));
+      for (let i = 0; i < n; i += step) g.fillText(S.t[i].slice(n > 300 ? 0 : 5).replace(/-/g, '/'), Math.min(Math.max(X(i), 24), pw - 24), H - 4);
+      for (const s of S.series) {
+        if (s.fill) {
+          g.beginPath(); let on = false, first = 0;
+          s.data.forEach((v, i) => { if (v == null) return; if (!on) { g.moveTo(X(i), Y(v)); on = true; first = i; } else g.lineTo(X(i), Y(v)); });
+          g.lineTo(X(n - 1), Y(Math.max(lo, 0))); g.lineTo(X(first), Y(Math.max(lo, 0))); g.closePath();
+          g.fillStyle = s.color; g.globalAlpha = 0.08; g.fill(); g.globalAlpha = 1;
+        }
+        g.strokeStyle = s.color; g.lineWidth = s.width || 1.5; g.setLineDash(s.dash || []); g.beginPath();
+        let on = false;
+        s.data.forEach((v, i) => { if (v == null) { on = false; return; } if (on) g.lineTo(X(i), Y(v)); else { g.moveTo(X(i), Y(v)); on = true; } });
+        g.stroke(); g.setLineDash([]); g.lineWidth = 1;
+      }
+      const i = hover >= 0 && hover < n ? hover : n - 1;
+      if (hover >= 0) { g.strokeStyle = C.muted; g.setLineDash([3, 3]); g.beginPath(); g.moveTo(Math.round(X(i)) + 0.5, top); g.lineTo(Math.round(X(i)) + 0.5, bot); g.stroke(); g.setLineDash([]); }
+      for (const s of S.series) if (s.data[i] != null) { g.fillStyle = s.color; g.beginPath(); g.arc(X(i), Y(s.data[i]), 3, 0, 7); g.fill(); }
+      info.innerHTML = `<div><b>${S.t[i]}</b>${S.series.map(s => `<span style="color:${s.color}">${s.name} ${s.data[i] == null ? '—' : S.fmt(s.data[i])}</span>`).join('')}</div>`;
+    }
+    const idx = x => { if (!S) return -1; const n = S.t.length, pw = cv.clientWidth - RG; return Math.max(0, Math.min(n - 1, Math.round((x - 4) / ((pw - 8) || 1) * (n - 1)))); };
+    cv.addEventListener('pointermove', e => { hover = idx(e.offsetX); draw(); });
+    cv.addEventListener('pointerdown', e => { if (e.pointerType !== 'mouse') { hover = idx(e.offsetX); draw(); } });
+    cv.addEventListener('pointerleave', e => { if (e.pointerType === 'mouse') { hover = -1; draw(); } });
+    const ro = new ResizeObserver(() => draw()); ro.observe(cv);
+    return { set(s) { S = s; hover = -1; draw(); }, redraw: draw, destroy() { ro.disconnect(); root.innerHTML = ''; } };
+  };
 })();
