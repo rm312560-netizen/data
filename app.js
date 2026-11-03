@@ -1,5 +1,5 @@
 // 資料查詢（手機版）：大盤、自選股、查詢與基本資料、試算、持股、排行、到價提醒；與電腦版同步
-const APP_VERSION = '1.5.4';
+const APP_VERSION = '1.5.5';
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmt = (n, d = 0) => Number(n).toLocaleString('zh-TW', { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -961,10 +961,10 @@ $('pushOn').addEventListener('click', async () => {
   } catch (e) { toast(`開啟失敗：${e.message}`); }
 });
 // 推播選項：討論暴增提醒
-async function loadPushOpts() { try { const o = await api('/push/opts'); $('pushForum').checked = o.forum !== false; $('pushRisk').checked = o.risk !== false; $('pushBrief').checked = o.brief !== false; $('pushClose').checked = o.close !== false; $('pushMove').checked = o.move !== false; } catch {} }
-for (const [id, name] of [['pushForum', '討論暴增提醒'], ['pushRisk', '持股風險提醒'], ['pushBrief', '盤前早報'], ['pushClose', '收盤日報'], ['pushMove', '盤中異動提醒']]) {
+async function loadPushOpts() { try { const o = await api('/push/opts'); $('pushForum').checked = o.forum !== false; $('pushRisk').checked = o.risk !== false; $('pushBrief').checked = o.brief !== false; $('pushClose').checked = o.close !== false; $('pushMove').checked = o.move !== false; $('pushTech').checked = o.tech !== false; } catch {} }
+for (const [id, name] of [['pushForum', '討論暴增提醒'], ['pushRisk', '持股風險提醒'], ['pushBrief', '盤前早報'], ['pushClose', '收盤日報'], ['pushMove', '盤中異動提醒'], ['pushTech', '技術面訊號']]) {
   $(id).addEventListener('change', async e => {
-    try { await api('/push/opts', { method: 'PUT', body: JSON.stringify({ forum: $('pushForum').checked, risk: $('pushRisk').checked, brief: $('pushBrief').checked, close: $('pushClose').checked, move: $('pushMove').checked }) }); toast(`已${e.target.checked ? '開啟' : '關閉'}${name}`); }
+    try { await api('/push/opts', { method: 'PUT', body: JSON.stringify({ forum: $('pushForum').checked, risk: $('pushRisk').checked, brief: $('pushBrief').checked, close: $('pushClose').checked, move: $('pushMove').checked, tech: $('pushTech').checked }) }); toast(`已${e.target.checked ? '開啟' : '關閉'}${name}`); }
     catch (err) { toast(err.message); e.target.checked = !e.target.checked; }
   });
 }
@@ -1025,13 +1025,20 @@ function renderInd() {
 }
 // 選股：轉接站一次給全部上市櫃股票（本益比、營收由電腦版上傳，股價即時），條件在手機上篩
 const SCR_F = [['pe', '本益比', '倍'], ['yld', '殖利率', '%'], ['pb', '淨值比', '倍'], ['revYoy', '營收年增', '%'], ['cumYoy', '累計年增', '%'],
-  ['revMom', '營收月增', '%'], ['pct', '今日漲跌', '%'], ['vol', '成交量', '張'], ['cap', '市值', '億'], ['price', '股價', '元']];
+  ['revMom', '營收月增', '%'], ['pct', '今日漲跌', '%'], ['vol', '成交量', '張'], ['cap', '市值', '億'], ['price', '股價', '元'],
+  ['r5', '5日漲跌', '%'], ['r20', '20日漲跌', '%'], ['vr', '量比', '倍'], ['kk', 'K 值', ''], ['rsi', 'RSI6', '']];
+// 技術訊號位元（和電腦版 history.js 一樣）
+const SCR_SIG = [['aboveMa20', 1, '站上月線'], ['aboveMa60', 2, '站上季線'], ['bull', 4, '多頭排列'], ['kdGold', 8, 'KD金叉'], ['macdGold', 32, 'MACD金叉'],
+  ['brk20', 128, '突破20日高'], ['new52h', 512, '52週新高'], ['bear', 32768, '空頭排列'], ['kdDead', 16, 'KD死叉'], ['brkLow20', 256, '跌破20日低'], ['new52l', 1024, '52週新低']];
+const SIG_TAG = [['KD金叉', 8], ['MACD金叉', 32], ['突破20日高', 128], ['52週新高', 512], ['站上月線', 2048], ['多頭排列', 4], ['KD死叉', 16], ['MACD死叉', 64], ['跌破20日低', 256], ['52週新低', 1024], ['跌破月線', 4096], ['空頭排列', 32768]];
 const SCR_PRESETS = {
   '高殖利率': { yld: [5, ''], pe: ['', 20], vol: [200, ''] }, '低本益比': { pe: ['', 12], vol: [200, ''], cap: [50, ''] },
   '營收成長': { revYoy: [20, ''], cumYoy: [15, ''], vol: [500, ''] }, '低淨值比': { pb: ['', 1], yld: [3, ''], vol: [100, ''] },
   '大型績優': { cap: [1000, ''], pe: ['', 20], yld: [3, ''] }, '今日強勢': { pct: [3, ''], vol: [2000, ''] },
+  '技術轉強': { sig: ['kdGold', 'aboveMa20'], vr: [1.2, ''], vol: [500, ''] }, '突破新高': { sig: ['brk20'], vr: [1.5, ''], vol: [1000, ''] },
+  '均線多頭': { sig: ['bull'], vol: [500, ''] }, '超跌': { rsi: ['', 20], vol: [500, ''] },
 };
-const SCR_SORT = { vol: ['成交量大→小', -1], pct: ['漲幅大→小', -1], pe: ['本益比低→高', 1], yld: ['殖利率高→低', -1], pb: ['淨值比低→高', 1], revYoy: ['營收年增高→低', -1], cap: ['市值大→小', -1] };
+const SCR_SORT = { vol: ['成交量大→小', -1], pct: ['漲幅大→小', -1], pe: ['本益比低→高', 1], yld: ['殖利率高→低', -1], pb: ['淨值比低→高', 1], revYoy: ['營收年增高→低', -1], cap: ['市值大→小', -1], r5: ['5日漲幅大→小', -1], vr: ['量比大→小', -1] };
 let SCR = null, scrAt = 0, scrN = 50;
 const scrSt = () => S.scr || { f: {}, mkt: 'all', ind: '', sort: 'vol' };
 const scrSave = st => setS('scr', st);
@@ -1040,7 +1047,7 @@ async function loadScr(force) {
   if (!SCR) $('movers').innerHTML = '<p class="empty">載入中…（約需幾秒）</p>';
   try {
     const d = await api('/screener');
-    const K = ['code', 'name', 'mkt', 'ind', 'price', 'pct', 'vol', 'cap', 'pe', 'pb', 'yld', 'rev', 'revYoy', 'revMom', 'cumYoy'];
+    const K = ['code', 'name', 'mkt', 'ind', 'price', 'pct', 'vol', 'cap', 'pe', 'pb', 'yld', 'rev', 'revYoy', 'revMom', 'cumYoy', 'sig', 'kk', 'rsi', 'vr', 'r5', 'r20', 'up'];
     SCR = { ...d, list: d.rows.map(r => Object.fromEntries(K.map((k, i) => [k, r[i]]))) }; scrAt = Date.now();
     scrForm(); renderScr();
   } catch (e) { $('movers').innerHTML = `<p class="empty">選股資料讀取失敗：${esc(e.message)}${/找不到|404/.test(e.message) ? '（轉接站需要重新部署）' : ''}</p>`; }
@@ -1049,7 +1056,7 @@ async function loadScr(force) {
 function scrForm() {
   if (!SCR || mvSide !== 'scr') return;
   $('mvMore').hidden = true;
-  const st = scrSt(), n = Object.keys(st.f).length;
+  const st = scrSt(), n = Object.keys(st.f).length + (st.sig?.length || 0), on = new Set(st.sig || []);
   const inds = [...new Set(SCR.list.map(x => x.ind).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'zh-TW'));
   $('movers').innerHTML = `<div class="scr-pre">${Object.keys(SCR_PRESETS).map(k => `<button data-preset="${k}">${k}</button>`).join('')}</div>
     <details class="scr-box" id="scrBox"${S.scrOpen ? ' open' : ''}><summary>篩選條件${n ? `（${n} 個）` : ''}</summary>
@@ -1057,6 +1064,8 @@ function scrForm() {
       <div class="scr-opt"><div class="seg" id="scrMkt">${[['all', '全部'], ['tse', '上市'], ['otc', '上櫃']].map(([v, l]) => `<button data-mkt="${v}" aria-pressed="${st.mkt === v}">${l}</button>`).join('')}</div>
         <select id="scrInd"><option value="">全部產業</option>${inds.map(x => `<option${x === st.ind ? ' selected' : ''}>${esc(x)}</option>`).join('')}</select>
         <button class="btn" data-scrclear>清除</button></div>
+      <div class="scr-pre" style="flex-wrap:wrap;padding-top:8px">${SCR_SIG.map(([k, , l]) => `<button data-sig="${k}" aria-pressed="${on.has(k)}">${l}</button>`).join('')}</div>
+      <p class="muted small" style="margin:4px 0 0">技術面用 ${SCR.techDate ? `${+SCR.techDate.slice(5, 7)}/${+SCR.techDate.slice(8, 10)} 收盤` : '電腦版算好'}的資料，訊號要同時符合</p>
     </details>
     <div class="scr-bar"><span id="scrCnt"></span><select id="scrSort">${Object.entries(SCR_SORT).map(([k, [l]]) => `<option value="${k}"${k === st.sort ? ' selected' : ''}>${l}</option>`).join('')}</select></div>
     <div id="scrRes" class="list"></div>`;
@@ -1068,13 +1077,15 @@ function renderScr() {
   const st = scrSt();
   const conds = Object.entries(st.f).map(([k, [a, b]]) => [k, a === '' ? null : +a, b === '' ? null : +b]).filter(([, a, b]) => a != null || b != null);
   const [, dir] = SCR_SORT[st.sort] || SCR_SORT.vol, k = SCR_SORT[st.sort] ? st.sort : 'vol';
+  const need = (st.sig || []).reduce((m, k) => m | (SCR_SIG.find(x => x[0] === k)?.[1] || 0), 0);
   const rows = SCR.list.filter(x => (st.mkt === 'all' || x.mkt === st.mkt) && (!st.ind || x.ind === st.ind)
+    && (!need || (x.sig != null && (x.sig & need) === need))
     && conds.every(([c, a, b]) => x[c] != null && (a == null || x[c] >= a) && (b == null || x[c] <= b)))
     .sort((p, q) => (p[k] == null) - (q[k] == null) || ((p[k] ?? 0) - (q[k] ?? 0)) * dir);
   $('scrCnt').textContent = `符合 ${fmt(rows.length)} 檔／共 ${fmt(SCR.list.length)} 檔`;
   const v = (x, d = 2, suf = '') => x == null ? '—' : fmt(x, d) + suf;
   $('scrRes').innerHTML = rows.length ? rows.slice(0, scrN).map(x => `<div class="li" data-code="${x.code}"><span class="nm"><small>${x.code}</small>${esc(x.name)}</span><span class="p">${fmt(x.price, 2)}</span><span class="c ${cls(x.pct)}">${pctTxt(x.pct)}</span>
-      <span class="sub">${x.ind ? esc(x.ind) + '・' : ''}本益比 ${v(x.pe)}・殖利率 ${v(x.yld, 2, '%')}・淨值比 ${v(x.pb)}<br>營收年增 ${pctTxt(x.revYoy, 1)}・累計 ${pctTxt(x.cumYoy, 1)}・量 ${v(x.vol, 0)} 張${x.cap != null ? `・市值 ${capTxt(x.cap)}` : ''}</span></div>`).join('')
+      <span class="sub">${x.ind ? esc(x.ind) + '・' : ''}本益比 ${v(x.pe)}・殖利率 ${v(x.yld, 2, '%')}・淨值比 ${v(x.pb)}<br>營收年增 ${pctTxt(x.revYoy, 1)}・累計 ${pctTxt(x.cumYoy, 1)}・量 ${v(x.vol, 0)} 張${x.cap != null ? `・市值 ${capTxt(x.cap)}` : ''}${x.sig ? `<br>${SIG_TAG.filter(t => x.sig & t[1]).slice(0, 3).map(t => t[0]).join('・')}${x.r5 != null ? `・5日 ${pctTxt(x.r5, 1)}` : ''}${x.vr != null ? `・量比 ${fmt(x.vr, 1)}` : ''}` : ''}</span></div>`).join('')
     + (rows.length > 50 ? `<button class="btn more-btn" data-scrmore>${scrN < rows.length ? `▼ 顯示更多（目前 ${Math.min(scrN, rows.length)}／${rows.length} 檔）` : '▲ 收合'}</button>` : '')
     : '<p class="empty">沒有符合條件的股票，放寬一點條件試試</p>';
   $('mvMeta').textContent = `${SCR.live && SCR.time ? new Date(SCR.time).toLocaleTimeString('zh-TW', { hour12: false }) + ' 股價・' : '收盤股價・'}本益比 ${SCR.valDate || '—'}・營收 ${SCR.revMonth || '—'}（電腦版上傳）・本益比、淨值比、殖利率依即時股價換算，虧損公司沒有本益比・僅供參考`;
@@ -1116,11 +1127,14 @@ function renderMovers() {
 $('mvMore').addEventListener('click', () => { setS('mvMore', !S.mvMore); renderMovers(); if (!S.mvMore) $('v-movers').scrollIntoView(); });
 $('movers').addEventListener('click', e => {
   const s = e.target.closest('[data-isort]'); if (s) { setS('indSort', s.dataset.isort); renderInd(); return; }
+  const sg = e.target.closest('[data-sig]');
+  if (sg) { const st = scrSt(), on = new Set(st.sig || []); on.has(sg.dataset.sig) ? on.delete(sg.dataset.sig) : on.add(sg.dataset.sig); st.sig = [...on]; sg.setAttribute('aria-pressed', String(on.has(sg.dataset.sig))); scrN = 50; scrSave(st); renderScr();
+    const n = Object.keys(st.f).length + st.sig.length; $('scrBox').querySelector('summary').textContent = `篩選條件${n ? `（${n} 個）` : ''}`; return; }
   const pr = e.target.closest('[data-preset]');
-  if (pr) { const st = scrSt(); st.f = Object.fromEntries(Object.entries(SCR_PRESETS[pr.dataset.preset]).map(([k, v]) => [k, v.map(String)])); scrN = 50; scrSave(st); scrForm(); renderScr(); toast(`已套用「${pr.dataset.preset}」`); return; }
+  if (pr) { const st = scrSt(), { sig, ...pf } = SCR_PRESETS[pr.dataset.preset]; st.sig = sig || []; st.f = Object.fromEntries(Object.entries(pf).map(([k, v]) => [k, v.map(String)])); scrN = 50; scrSave(st); scrForm(); renderScr(); toast(`已套用「${pr.dataset.preset}」`); return; }
   const mk = e.target.closest('[data-mkt]');
   if (mk) { const st = scrSt(); st.mkt = mk.dataset.mkt; scrSave(st); document.querySelectorAll('#scrMkt button').forEach(b => b.setAttribute('aria-pressed', String(b === mk))); scrN = 50; renderScr(); return; }
-  if (e.target.closest('[data-scrclear]')) { scrSave({ f: {}, mkt: 'all', ind: '', sort: scrSt().sort }); scrN = 50; scrForm(); renderScr(); return; }
+  if (e.target.closest('[data-scrclear]')) { scrSave({ f: {}, sig: [], mkt: 'all', ind: '', sort: scrSt().sort }); scrN = 50; scrForm(); renderScr(); return; }
   if (e.target.closest('[data-scrmore]')) { const more = scrN < +($('scrCnt').textContent.match(/符合 ([\d,]+)/)?.[1].replace(/,/g, '') || 0); scrN = more ? scrN + 50 : 50; renderScr(); if (!more) $('v-movers').scrollIntoView(); return; }
   const g = e.target.closest('[data-ind]'); if (g) { indOpen = indOpen === g.dataset.ind ? null : g.dataset.ind; renderInd(); return; }
   const r = e.target.closest('[data-code]'); if (r) openStock(r.dataset.code);
