@@ -1,5 +1,5 @@
 // 資料查詢（手機版）：大盤、自選股、查詢與基本資料、試算、持股、排行、到價提醒；與電腦版同步
-const APP_VERSION = '1.5.7';
+const APP_VERSION = '1.5.8';
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmt = (n, d = 0) => Number(n).toLocaleString('zh-TW', { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -1439,7 +1439,7 @@ function renderReports(note) {
   const total = DB.get('SELECT COUNT(*) AS n, SUM(json IS NOT NULL) AS d FROM reports');
   $('rpMeta').textContent = note || (total.n ? `共 ${total.n} 份，已下載 ${total.d || 0} 份可離線閱讀${words.length ? '（搜尋只涵蓋已下載的內容）' : ''}` : '');
   $('reports').innerHTML = rows.length ? rows.map(r => `<div class="rp" data-key="${esc(r.key)}">
-    <span class="t"><b>${esc(r.key.replace(/ (自訂|社群)$/, ''))}</b><span class="pill ${r.kind === 'social' ? 'social' : ''}">${r.kind === 'social' ? '社群' : r.key.endsWith('自訂') ? '自訂分析' : '每日'}</span>
+    <span class="t"><b>${esc(r.key.replace(/ (自訂|社群)$/, ''))}</b><span class="pill ${r.kind === 'social' ? 'social' : r.kind === 'ai' ? 'ai' : ''}">${r.kind === 'social' ? '社群' : r.kind === 'ai' ? 'AI' : r.key.endsWith('自訂') ? '自訂分析' : '每日'}</span>
       <span class="muted small">${r.count || 0} ${r.kind === 'social' ? '則' : '支'}</span>${r.json ? '' : '<span class="offline">未下載</span>'}</span>
     <span class="h">${hilite(r.headline || '', words)}</span></div>`).join('')
     : `<p class="empty">${total.n ? '沒有符合的日報。' : '還沒有日報。電腦版產生日報後，下次同步就會出現在這裡。'}</p>`;
@@ -1458,10 +1458,39 @@ async function openReport(key) {
   if (rpOpen !== key) return;
   $('rpInfo').textContent = `${String(j.created_at || '').slice(5, 16)}・${j.model || ''}`;
   $('rpItemsSum').textContent = `收錄的${j.kind === 'social' ? '貼文' : '影片'}（${(j.items || []).length}）`;
+  $('rpItemsSum').parentElement.hidden = j.kind === 'ai';
+  rpPodcast(j);
   $('rpItems').innerHTML = `<ol>${(j.items || []).map(it => `<li>${it.url ? `<a href="${esc(it.url)}" target="_blank" rel="noopener">${esc(it.title)}</a>` : esc(it.title)} <span class="muted small">${esc(it.channel || '')}</span></li>`).join('')}</ol>`;
   $('rpStats').innerHTML = j.stats ? socialStats(j.stats) : '';
-  $('rpBody').innerHTML = mdToHtml(j.content);
+  $('rpBody').innerHTML = mdToHtml(j.content).replace(/【(官方|媒體|傳聞)】/g, (m, k) => `<span class="src-tag src-${k}">${k}</span>`);
 }
+// AI 日報的播客版：電腦版寫好的對話稿，用 iPhone 內建的兩種中文語音輪流唸
+const RPC = { lines: [], i: 0, on: false };
+function rpPodcast(j) {
+  rpcStop();
+  const box = $('rpPc');
+  box.hidden = !(j.kind === 'ai' && j.podcast?.length);
+  if (box.hidden) return;
+  RPC.lines = j.podcast; RPC.i = 0;
+  box.innerHTML = `<div class="btnrow"><b>🎧 播客版</b><button class="btn" id="rpcPlay">▶ 播放</button><button class="btn" id="rpcNext">下一段</button></div>
+    <div class="pcl">${j.podcast.map((l, i) => `<p data-rpci="${i}"><b>${esc(l.who)}</b>${esc(l.text)}</p>`).join('')}</div>`;
+}
+function rpcStop() { RPC.on = false; try { speechSynthesis.cancel(); } catch {} const b = $('rpcPlay'); if (b) b.textContent = '▶ 播放'; }
+function rpcSpeak() {
+  if (!RPC.on || RPC.i >= RPC.lines.length) return rpcStop();
+  const vs = speechSynthesis.getVoices().filter(v => /zh/i.test(v.lang)).sort((a, b) => (/TW/i.test(b.lang) ? 1 : 0) - (/TW/i.test(a.lang) ? 1 : 0));
+  const l = RPC.lines[RPC.i], u = new SpeechSynthesisUtterance(l.text), v = l.who === '小安' ? vs[0] : (vs[1] || vs[0]);
+  if (v) { u.voice = v; u.lang = v.lang; } else u.lang = 'zh-TW';
+  u.rate = 1.05; if (vs.length < 2 && l.who !== '小安') u.pitch = 0.8;
+  u.onend = () => { RPC.i++; rpcSpeak(); }; u.onerror = u.onend;
+  document.querySelectorAll('#rpPc .pcl p').forEach((p, i) => p.classList.toggle('on', i === RPC.i));
+  speechSynthesis.speak(u);
+}
+$('rpPc').addEventListener('click', e => {
+  if (e.target.id === 'rpcPlay') { if (RPC.on) return rpcStop(); RPC.on = true; e.target.textContent = '⏸ 暫停'; return rpcSpeak(); }
+  if (e.target.id === 'rpcNext') { speechSynthesis.cancel(); RPC.i = Math.min(RPC.lines.length - 1, RPC.i + (RPC.on ? 0 : 1)); if (!RPC.on) document.querySelectorAll('#rpPc .pcl p').forEach((p, i) => p.classList.toggle('on', i === RPC.i)); return; }
+  const p = e.target.closest('[data-rpci]'); if (p) { speechSynthesis.cancel(); RPC.i = +p.dataset.rpci; RPC.on = true; $('rpcPlay').textContent = '⏸ 暫停'; setTimeout(rpcSpeak, 50); }
+});
 // 社群日報的統計：數字、個股熱度（點開看誰說了什麼）、帳號觀點
 function socialStats(st) {
   const pct = (a, b) => b ? Math.round(a / b * 100) : 0;
@@ -1475,7 +1504,7 @@ function socialStats(st) {
       ${t.market === '台股' && stockMap.has(t.ticker) ? `<button class="btn" data-open="${esc(t.ticker)}">看報價</button>` : ''}</div></details>`).join('')}</div>` : ''}`;
 }
 $('reports').addEventListener('click', e => { const r = e.target.closest('[data-key]'); if (r) openReport(r.dataset.key); });
-$('rpBack').addEventListener('click', () => { rpOpen = null; $('rpView').hidden = true; $('rpList').hidden = false; renderReports(); });
+$('rpBack').addEventListener('click', () => { rpcStop(); rpOpen = null; $('rpView').hidden = true; $('rpList').hidden = false; renderReports(); });
 $('rpKind').addEventListener('click', e => { const b = e.target.closest('[data-k]'); if (b) { rpKind = b.dataset.k; renderReports(); } });
 $('rpQ').addEventListener('input', () => renderReports());
 $('rpStats').addEventListener('click', e => { const b = e.target.closest('[data-open]'); if (b) openStock(b.dataset.open); });
@@ -1520,6 +1549,7 @@ async function afterSetup() {
   const code = new URLSearchParams(location.search).get('code');
   const tab = new URLSearchParams(location.search).get('tab');
   if (code && stockMap.has(code)) { if (tab === 'talk') fTab = 'talk'; history.replaceState(null, '', location.pathname); openStock(code); }
+  else if (new URLSearchParams(location.search).get('rp')) { const k = new URLSearchParams(location.search).get('rp'); history.replaceState(null, '', location.pathname); go('reports'); loadReports().then(() => openReport(k)).catch(() => {}); }   // AI 日報推播
   else if (tab === 'hold') { history.replaceState(null, '', location.pathname); go('hold'); }   // 風險提醒推播
   else if (tab === 'close') { history.replaceState(null, '', location.pathname); closeForce = true; go('hold'); if (!$('hClose').hidden) $('hClose').open = true; }   // 收盤日報推播
   else if (tab === 'brief') { history.replaceState(null, '', location.pathname); briefForce = true; go('watch'); if (!$('wBrief').hidden) $('wBrief').open = true; }   // 盤前早報推播

@@ -106,7 +106,7 @@
   <!-- 日報 -->
   <section id="v-reports" class="view" hidden>
     <div id="rpList">
-      <div class="seg" id="rpKind"><button data-k="all" aria-pressed="true">全部</button><button data-k="video" aria-pressed="false" data-alt="影片">影片日報</button><button data-k="social" aria-pressed="false" data-alt="社群">社群日報</button></div>
+      <div class="seg" id="rpKind"><button data-k="all" aria-pressed="true">全部</button><button data-k="video" aria-pressed="false" data-alt="影片">影片日報</button><button data-k="social" aria-pressed="false" data-alt="社群">社群日報</button><button data-k="ai" aria-pressed="false" data-alt="科技">AI 日報</button></div>
       <div class="search"><input id="rpQ" type="search" placeholder="搜尋股票、產業、關鍵字" autocomplete="off"></div>
       <p class="muted small" id="rpMeta"></p>
       <div id="reports" class="list"></div>
@@ -114,6 +114,7 @@
     <div id="rpView" hidden>
       <div class="head"><button class="btn" id="rpBack">‹ 返回</button><span class="muted small" id="rpInfo"></span></div>
       <div id="rpStats"></div>
+      <div id="rpPc" class="panel" hidden></div>
       <details class="panel rp-items"><summary id="rpItemsSum">收錄內容</summary><div id="rpItems"></div></details>
       <article class="md panel" id="rpBody"></article>
     </div>
