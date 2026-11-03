@@ -211,6 +211,22 @@ svg.btc { width: 100%; height: 140px; display: block; }
 
 /* 產業漲跌 */
 .ind-sort { margin: 4px 0 6px; }
+/* 持股風險提醒 */
+.risk-box { border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; margin-bottom: 10px; background: var(--panel); }
+.risk-box h3 { margin: 0 0 4px; font-size: .9rem; display: flex; justify-content: space-between; align-items: baseline; }
+.risk-box h3 small { font-weight: 400; color: var(--muted); font-size: .75rem; }
+.rk { display: grid; grid-template-columns: 4.8em minmax(0, 1fr); gap: 2px 8px; padding: 7px 0; border-top: 1px solid var(--line); font-size: .85rem; }
+.rk .tag { font-size: .72rem; border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; color: var(--muted); align-self: start; white-space: nowrap; text-align: center; }
+.rk.lv3 .tag { background: var(--up); color: #fff; border-color: transparent; font-weight: 600; }
+.rk.lv2 .tag { color: var(--up); border-color: var(--up); }
+.rk.lv1 .tag { color: var(--fg); }
+body.stealth .rk .tag { background: none; color: var(--fg); border-color: var(--line); }
+.rk .nm small { color: var(--muted); font-family: var(--num); margin-right: 4px; }
+.rk .nm em { font-style: normal; font-size: .72rem; color: var(--muted); margin-left: 4px; }
+.rk .tx { grid-column: 2; font-size: .78rem; color: var(--muted); }
+.rk.lv3 .tx, .rk.lv2 .tx { color: var(--fg); }
+.rk.lv1 .tx, .rk.lv0 .tx { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.risk-box .rk-more { border: 0; background: none; color: var(--muted); font-size: .8rem; padding: 6px 0 2px; }
 /* 選股 */
 .scr-pre { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; padding-bottom: 8px; }
 .scr-pre button { flex: none; border: 1px solid var(--line); background: var(--panel); border-radius: 999px; padding: 5px 12px; font-size: .82rem; white-space: nowrap; }

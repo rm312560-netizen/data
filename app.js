@@ -1,5 +1,5 @@
 // 資料查詢（手機版）：大盤、自選股、查詢與基本資料、試算、持股、排行、到價提醒；與電腦版同步
-const APP_VERSION = '1.4.6';
+const APP_VERSION = '1.4.7';
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmt = (n, d = 0) => Number(n).toLocaleString('zh-TW', { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -581,6 +581,30 @@ $('hForm').addEventListener('submit', e => {
   $('hForm').hidden = true; toast('已加入持股'); renderHold(); syncSoon(); poll(true);
 });
 let openLots = new Set();
+// ---------- 持股風險提醒（持股頁最上面；沒有項目就不顯示） ----------
+let RISK = null, riskAt = 0, riskAll = false;
+async function loadRisk(force) {
+  if (!force && RISK && Date.now() - riskAt < 10 * 60e3) return renderRisk();
+  try { RISK = await api('/risk'); riskAt = Date.now(); renderRisk(); } catch {}
+}
+function renderRisk() {
+  const box = $('hRisk'); if (!RISK) return;
+  const soon = new Date(Date.now() + 14 * 86400e3).toLocaleDateString('sv-SE', { timeZone: 'Asia/Taipei' });
+  const items = RISK.items.filter(x => x.level > 0 || (x.date && x.date <= soon));
+  const warn = items.filter(x => x.level > 0), cal = items.filter(x => x.level === 0);
+  box.hidden = !items.length;
+  if (!items.length) return;
+  const row = x => `<div class="rk lv${x.level}" data-code="${x.code}"><span class="tag">${esc(x.label)}</span><span class="nm"><small>${x.code}</small>${esc(x.name)}<em>${x.mine === 'hold' ? '持股' : '自選'}</em></span><span class="tx">${esc(x.text)}</span></div>`;
+  const show = riskAll ? cal : cal.slice(0, 2);
+  box.innerHTML = `<h3><span data-alt="提醒事項">風險提醒</span><small>${warn.length ? `${warn.length} 項警示` : '沒有警示'}${cal.length ? `・${cal.length} 筆行事曆` : ''}</small></h3>`
+    + warn.map(row).join('') + show.map(row).join('')
+    + (cal.length > 2 ? `<button class="rk-more" data-rkmore>${riskAll ? '▲ 收起' : `▼ 還有 ${cal.length - 2} 筆除權息／法說會`}</button>` : '');
+  if (S.theme === 'stealth') box.querySelectorAll('[data-alt]').forEach(el => { el.textContent = el.dataset.alt; });
+}
+$('hRisk').addEventListener('click', e => {
+  if (e.target.closest('[data-rkmore]')) { riskAll = !riskAll; renderRisk(); return; }
+  const r = e.target.closest('[data-code]'); if (r) openStock(r.dataset.code);
+});
 function renderHold() {
   const rows = DB.all('SELECT * FROM holdings ORDER BY code, buy_date'), c = feeCfg();
   if (!rows.length) { $('hSum').innerHTML = ''; $('holds').innerHTML = '<p class="empty">還沒有持股。按「＋ 新增」，或在「查詢」頁按「加入持股」。</p>'; return; }
@@ -746,8 +770,13 @@ $('pushOn').addEventListener('click', async () => {
   } catch (e) { toast(`開啟失敗：${e.message}`); }
 });
 // 推播選項：討論暴增提醒
-async function loadPushOpts() { try { $('pushForum').checked = (await api('/push/opts')).forum !== false; } catch {} }
-$('pushForum').addEventListener('change', async e => { try { await api('/push/opts', { method: 'PUT', body: JSON.stringify({ forum: e.target.checked }) }); toast(e.target.checked ? '已開啟討論暴增提醒' : '已關閉討論暴增提醒'); } catch (err) { toast(err.message); e.target.checked = !e.target.checked; } });
+async function loadPushOpts() { try { const o = await api('/push/opts'); $('pushForum').checked = o.forum !== false; $('pushRisk').checked = o.risk !== false; } catch {} }
+for (const [id, name] of [['pushForum', '討論暴增提醒'], ['pushRisk', '持股風險提醒']]) {
+  $(id).addEventListener('change', async e => {
+    try { await api('/push/opts', { method: 'PUT', body: JSON.stringify({ forum: $('pushForum').checked, risk: $('pushRisk').checked }) }); toast(`已${e.target.checked ? '開啟' : '關閉'}${name}`); }
+    catch (err) { toast(err.message); e.target.checked = !e.target.checked; }
+  });
+}
 $('pushTest').addEventListener('click', async () => { try { const r = await api('/push/test', { method: 'POST' }); toast(r.total ? `已送出（${r.sent}/${r.total} 台裝置）` : '還沒有裝置開啟推播'); } catch (e) { toast(e.message); } });
 $('pushOff').addEventListener('click', async () => {
   const reg = await navigator.serviceWorker.getRegistration(), sub = await reg?.pushManager.getSubscription();
@@ -1076,7 +1105,7 @@ function go(v) {
   document.querySelectorAll('.tabbar button').forEach(b => b.toggleAttribute('aria-current', b.dataset.tab === v));
   if (v === 'watch') renderWatch();
   if (v === 'quote') renderQuote();
-  if (v === 'hold') renderHold();
+  if (v === 'hold') { renderHold(); loadRisk(); }
   if (v === 'movers') { syncMvUi(); loadMovers(); }
   if (v === 'settings') renderSettings();
   if (v === 'reports') { if (!rpOpen) { renderReports(); loadReports(); } }
@@ -1109,6 +1138,7 @@ async function afterSetup() {
   const code = new URLSearchParams(location.search).get('code');
   const tab = new URLSearchParams(location.search).get('tab');
   if (code && stockMap.has(code)) { if (tab === 'talk') fTab = 'talk'; history.replaceState(null, '', location.pathname); openStock(code); }
+  else if (tab === 'hold') { history.replaceState(null, '', location.pathname); go('hold'); }   // 風險提醒推播
 }
 (async () => {
   try {

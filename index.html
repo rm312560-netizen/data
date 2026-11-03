@@ -66,6 +66,7 @@
       <p class="muted small" id="hFee"></p>
       <button class="primary" type="submit">加入</button>
     </form>
+    <div id="hRisk" class="risk-box" hidden></div>
     <div id="hSum" class="cards"></div>
     <div id="holds" class="list"></div>
     <details class="panel more" id="pDiv"><summary data-alt="日程">除權息行事曆</summary><div class="mbody"></div></details>
@@ -124,6 +125,7 @@
     <div class="panel set">
       <p class="muted small" id="pushInfo">到價提醒、停損停利、除息前一天，會用 iPhone 通知告訴你（App 沒開也收得到）。要先把 App 加到主畫面。</p>
       <label class="small" style="display:flex;gap:8px;align-items:center;margin:6px 0"><input type="checkbox" id="pushForum" checked> 討論暴增提醒（持股、自選股最近 1 小時的 Yahoo 留言超過平常 3 倍時通知，每檔每天最多一次）</label>
+      <label class="small" style="display:flex;gap:8px;align-items:center;margin:6px 0"><input type="checkbox" id="pushRisk" checked> 持股風險提醒（持股、自選股被列為注意股、處置股、全額交割、暫停交易，或有法說會時，每天 08:00、18:30 檢查）</label>
       <div class="btnrow"><button class="btn" id="pushOn">開啟推播</button><button class="btn" id="pushTest">送測試通知</button><button class="btn" id="pushOff">關閉</button></div>
     </div>
     <h2 class="sub">同步</h2>
