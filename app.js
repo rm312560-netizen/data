@@ -1,5 +1,5 @@
 // 資料查詢（手機版）：大盤、自選股、查詢與基本資料、試算、持股、排行、到價提醒；與電腦版同步
-const APP_VERSION = '1.4.2';
+const APP_VERSION = '1.4.3';
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmt = (n, d = 0) => Number(n).toLocaleString('zh-TW', { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -755,14 +755,30 @@ $('pushOff').addEventListener('click', async () => {
 });
 
 // ---------- 排行 ----------
-let mvSide = 'up', MV = null, mvAt = 0;
+let mvSide = 'up', MV = null, mvAt = 0, VR = null, vrAt = 0;
+// 成交量排行（股票／ETF／全部，依上方類型切換）
+async function loadVol(force) {
+  if (!force && VR && Date.now() - vrAt < 30e3) return renderVol();
+  $('movers').innerHTML = '<p class="empty">載入中…</p>';
+  try { VR = await api('/volrank'); vrAt = Date.now(); renderVol(); }
+  catch (e) { $('movers').innerHTML = `<p class="empty">排行讀取失敗：${esc(e.message)}${/找不到|404/.test(e.message) ? '（轉接站需要重新部署）' : ''}</p>`; }
+}
+function renderVol() {
+  if (!VR || mvSide !== 'vol') return;
+  const list = VR[S.mvType] || [];
+  $('movers').innerHTML = list.length ? list.map((x, i) => `<div class="li" data-code="${x.code}"><span class="nm"><small>${i + 1}. ${x.code}</small>${esc(x.name)}</span><span class="p">${fmt(x.price, 2)}</span><span class="c ${cls(x.pct)}">${pctTxt(x.pct)}</span>
+    <span class="sub">成交 <b>${fmt(x.volume)}</b> 張${x.value != null ? `・成交值 ${fmt(x.value, 1)} 億` : ''}</span></div>`).join('') : '<p class="empty">沒有資料</p>';
+  $('mvMeta').textContent = `${VR.time ? new Date(VR.time).toLocaleTimeString('zh-TW', { hour12: false }) + ' 更新・' : ''}${{ stock: '只看股票', etf: '只看 ETF', all: '股票與 ETF 一起排' }[S.mvType] || ''}・上市上櫃一起排名`;
+}
 async function loadMovers(force) {
+  if (mvSide === 'vol') return loadVol(force);
   if (!force && MV && Date.now() - mvAt < 30e3) return renderMovers();
   $('movers').innerHTML = '<p class="empty">載入中…</p>';
   try { MV = await api(`/movers?type=${S.mvType}&minVol=${S.mvVol}&minCap=${S.mvType === 'etf' ? 0 : S.mvCap}`); mvAt = Date.now(); renderMovers(); }
   catch (e) { $('movers').innerHTML = `<p class="empty">排行讀取失敗：${esc(e.message)}</p>`; }
 }
 function renderMovers() {
+  if (mvSide === 'vol') return renderVol();
   if (!MV) return;
   const list = MV[mvSide] || [];
   $('movers').innerHTML = list.length ? list.map((x, i) => `<div class="li" data-code="${x.code}"><span class="nm"><small>${i + 1}. ${x.code}</small>${esc(x.name)}</span><span class="p">${fmt(x.price, 2)}</span><span class="c ${cls(x.pct)}">${pctTxt(x.pct)}</span>
@@ -770,14 +786,15 @@ function renderMovers() {
   $('mvMeta').textContent = `${MV.time ? new Date(MV.time).toLocaleTimeString('zh-TW', { hour12: false }) + ' 更新・' : ''}排除成交量未滿 ${fmt(S.mvVol)} 張${S.mvCap && S.mvType !== 'etf' ? `、市值未滿 ${fmt(S.mvCap)} 億` : ''}`;
 }
 $('movers').addEventListener('click', e => { const r = e.target.closest('[data-code]'); if (r) openStock(r.dataset.code); });
-$('mvType').addEventListener('click', e => { const b = e.target.closest('[data-t]'); if (!b) return; setS('mvType', b.dataset.t); syncMvUi(); loadMovers(true); });
-$('mvSide').addEventListener('click', e => { const b = e.target.closest('[data-s]'); if (!b) return; mvSide = b.dataset.s; syncMvUi(); renderMovers(); });
+$('mvType').addEventListener('click', e => { const b = e.target.closest('[data-t]'); if (!b) return; setS('mvType', b.dataset.t); syncMvUi(); mvSide === 'vol' ? renderVol() : loadMovers(true); });
+$('mvSide').addEventListener('click', e => { const b = e.target.closest('[data-s]'); if (!b) return; mvSide = b.dataset.s; syncMvUi(); loadMovers(); });
 $('mvVol').addEventListener('change', e => { setS('mvVol', Number(e.target.value)); loadMovers(true); });
 $('mvCap').addEventListener('change', e => { setS('mvCap', Number(e.target.value)); loadMovers(true); });
 function syncMvUi() {
   document.querySelectorAll('#mvType button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.t === S.mvType)));
   document.querySelectorAll('#mvSide button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.s === mvSide)));
   $('mvVol').value = String(S.mvVol); $('mvCap').value = String(S.mvCap); $('mvCap').disabled = S.mvType === 'etf';
+  $('mvFilters').hidden = mvSide === 'vol';   // 成交量排行不用篩選條件
 }
 
 // ---------- 同步 ----------
