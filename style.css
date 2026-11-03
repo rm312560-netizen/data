@@ -211,6 +211,25 @@ svg.btc { width: 100%; height: 140px; display: block; }
 
 /* 產業漲跌 */
 .ind-sort { margin: 4px 0 6px; }
+/* 目標配置 */
+.rb-ctl { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-bottom: 8px; font-size: .84rem; }
+.rb-ctl input { width: 7.5em; padding: 5px 8px; }
+.rb-ctl .seg { margin: 0; flex: none; }
+.rb-ctl .seg button { padding: 5px 9px; font-size: .8rem; flex: none; }
+.rb-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px 8px; padding: 8px 0; border-top: 1px solid var(--line); font-size: .85rem; }
+.rb-row .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rb-row .nm small { color: var(--muted); font-family: var(--num); margin-right: 4px; }
+.rb-row .act { text-align: right; font-weight: 600; white-space: nowrap; }
+.rb-row .sub { grid-column: 1 / -1; font-size: .74rem; color: var(--muted); }
+.rb-bar { grid-column: 1 / -1; position: relative; height: 6px; background: var(--line); border-radius: 3px; margin: 2px 0; }
+.rb-bar i { position: absolute; top: 0; bottom: 0; left: 0; background: var(--fg); border-radius: 3px; }
+.rb-bar b { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--up); }
+body.stealth .rb-bar b { background: var(--muted); }
+.rb-edit { border: 1px dashed var(--line); border-radius: 8px; padding: 8px 10px; margin-bottom: 8px; display: grid; gap: 6px; }
+.rb-er { display: grid; grid-template-columns: 5.5em minmax(0, 1fr) 4.5em auto; gap: 6px; align-items: center; font-size: .82rem; }
+.rb-er input { width: 100%; padding: 4px 6px; }
+.rb-er span { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rb-er .x { border: 0; background: none; color: var(--muted); font-size: 1.1rem; }
 /* 資產走勢 */
 .eq-ctl { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
 .eq-ctl .seg { margin: 0; flex: none; }

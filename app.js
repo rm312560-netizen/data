@@ -1,5 +1,5 @@
 // 資料查詢（手機版）：大盤、自選股、查詢與基本資料、試算、持股、排行、到價提醒；與電腦版同步
-const APP_VERSION = '1.5.3';
+const APP_VERSION = '1.5.4';
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmt = (n, d = 0) => Number(n).toLocaleString('zh-TW', { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -15,6 +15,7 @@ function loadSettings() {
     theme: DB.setting('theme', 'stealth'), interval: DB.setting('interval', 5), marketOnly: DB.setting('marketOnly', true),
     rate: DB.setting('rate', 0.1425), disc: DB.setting('disc', 6), minFee: DB.setting('minFee', 20),
     mvType: DB.setting('mvType', 'stock'), mvVol: DB.setting('mvVol', 500), mvCap: DB.setting('mvCap', 0), mvMore: DB.setting('mvMore', false),
+    targets: DB.setting('targets', { updatedAt: null, items: [] }), rbMode: DB.setting('rbMode', 'buy'), rbStep: DB.setting('rbStep', 1),
     eqMode: DB.setting('eqMode', 'ret'), eqRange: DB.setting('eqRange', 'all'),
     indSort: DB.setting('indSort', 'pct'), scr: DB.setting('scr', null), scrOpen: DB.setting('scrOpen', false),   // 產業排序、選股條件
     qmode: DB.setting('qmode', 'lot'),          // 報價顯示：lot 整股（張）／odd 零股（股）
@@ -814,6 +815,83 @@ async function renderNewsPanel(box) {
     box.innerHTML = newsHtml((r.items || []).filter(n => codes.has(n.code)), '近 30 天持股與自選股沒有重大訊息。') + (r.at ? `<p class="muted small">電腦版整理於 ${esc(r.at.slice(5, 16))}</p>` : '');
   } catch (e) { box.innerHTML = `<p class="empty small">讀取失敗：${esc(e.message)}</p>`; }
 }
+// 目標配置與再平衡（計算在 rebal-core.js；目標透過轉接站 /targets 和電腦版同步，以最後修改時間為準）
+let rbPrices = {}, rbEditing = null, rbCash = '';
+const rbHold = () => DB.all('SELECT code, shares FROM holdings');
+const rbName = c => stockMap.get(c)?.name || '';
+async function rbSyncTargets() {
+  try {
+    const r = await api('/targets');
+    if (r.updatedAt && r.updatedAt > (S.targets.updatedAt || '')) setS('targets', { updatedAt: r.updatedAt, items: r.items || [] });
+    else if (S.targets.updatedAt && (!r.updatedAt || r.updatedAt < S.targets.updatedAt)) await api('/targets', { method: 'PUT', body: JSON.stringify(S.targets) });
+  } catch {}
+}
+async function rbLoadPrices() {
+  const codes = [...new Set([...S.targets.items.map(x => x.code), ...rbHold().map(h => h.code)])];
+  const need = codes.filter(c => !(Q[c]?.price > 0));
+  if (need.length) { try { (await api(`/quote?codes=${need.join(',')}`)).quotes.forEach(q => { if (q.price > 0 && !Q[q.code]) Q[q.code] = q; }); } catch {} }
+  rbPrices = Object.fromEntries(codes.map(c => [c, Q[c]?.price || stockMap.get(c)?.close || 0]));
+}
+async function renderRbPanel(b) {
+  await rbSyncTargets(); await rbLoadPrices();
+  b.innerHTML = `<div class="rb-edit" id="rbEdit" hidden></div>
+    <div class="rb-ctl"><span>投入</span><input id="rbCash" inputmode="numeric" placeholder="0" value="${esc(rbCash)}"><span>元</span><button class="btn" id="rbEditBtn">編輯目標</button></div>
+    <div class="rb-ctl"><div class="seg" id="rbMode"><button data-v="buy">只買不賣</button><button data-v="both">買賣都調整</button></div>
+      <div class="seg" id="rbStep"><button data-v="1">零股</button><button data-v="1000">整股</button></div></div>
+    <div id="rbRes"></div>
+    <p class="muted small">「只買不賣」把投入的錢優先買離目標最遠的；「買賣都調整」會建議賣掉超過目標的部分（含證交稅）。手續費依設定的費率估算，目標會和電腦版同步。只是試算，不是投資建議。</p>`;
+  $('rbCash').addEventListener('input', e => { rbCash = e.target.value; drawRb(); });
+  b.querySelector('#rbMode').addEventListener('click', e => { const x = e.target.closest('[data-v]'); if (x) { setS('rbMode', x.dataset.v); drawRb(); } });
+  b.querySelector('#rbStep').addEventListener('click', e => { const x = e.target.closest('[data-v]'); if (x) { setS('rbStep', +x.dataset.v); drawRb(); } });
+  $('rbEditBtn').addEventListener('click', () => { rbEditing = rbEditing ? null : S.targets.items.map(x => ({ ...x })); if (rbEditing && !rbEditing.length) rbEditing.push({ code: '', pct: '' }); drawRbEdit(); });
+  $('rbEdit').addEventListener('input', e => {
+    const row = e.target.closest('[data-i]'); if (!row) return;
+    const k = e.target.dataset.k; rbEditing[+row.dataset.i][k] = k === 'code' ? e.target.value.trim().toUpperCase() : e.target.value;
+    if (k === 'code') row.querySelector('span').textContent = rbName(e.target.value.trim().toUpperCase());
+    $('rbSum').textContent = rbSumTxt();
+  });
+  $('rbEdit').addEventListener('click', async e => {
+    const d = e.target.closest('[data-del]');
+    if (d) { rbEditing.splice(+d.dataset.del, 1); drawRbEdit(); return; }
+    if (e.target.id === 'rbAdd') { rbEditing.push({ code: '', pct: '' }); drawRbEdit(); return; }
+    if (e.target.id === 'rbFill') {
+      const r = REBAL.rebalance({ holdings: rbHold(), targets: [], prices: rbPrices, feeCfg: feeCfg() });
+      rbEditing = r.rows.filter(x => x.value > 0).map(x => ({ code: x.code, pct: Math.round(x.curPct * 10) / 10 })); drawRbEdit(); return;
+    }
+    if (e.target.id === 'rbSave') {
+      const items = rbEditing.filter(x => x.code && +x.pct > 0).map(x => ({ code: x.code, pct: +x.pct }));
+      const bad = items.find(x => !stockMap.has(x.code)); if (bad) return toast(`找不到代號 ${bad.code}`);
+      setS('targets', { updatedAt: new Date().toISOString(), items }); rbEditing = null;
+      api('/targets', { method: 'PUT', body: JSON.stringify(S.targets) }).catch(() => toast('目標已存在手機，轉接站同步失敗，之後會再試'));
+      await rbLoadPrices(); drawRbEdit(); drawRb(); toast('目標已儲存');
+    }
+  });
+  drawRb();
+}
+const rbSumTxt = () => { const s = rbEditing.reduce((a, x) => a + (+x.pct || 0), 0); return `合計 ${fmt(s, 1)}%${Math.abs(s - 100) > 0.05 ? '（建議 100%）' : ''}`; };
+function drawRbEdit() {
+  const box = $('rbEdit'); if (!box) return;
+  box.hidden = !rbEditing; $('rbEditBtn').textContent = rbEditing ? '取消' : '編輯目標';
+  if (!rbEditing) return;
+  box.innerHTML = rbEditing.map((x, i) => `<div class="rb-er" data-i="${i}"><input data-k="code" value="${esc(x.code)}" placeholder="代號" autocapitalize="characters"><span>${esc(rbName(x.code))}</span><input data-k="pct" inputmode="decimal" value="${x.pct}" placeholder="%"><button class="x" data-del="${i}">×</button></div>`).join('')
+    + `<div class="rb-ctl"><button class="btn" id="rbAdd">＋ 新增</button><button class="btn" id="rbFill">用目前比例</button><span class="muted small" id="rbSum">${rbSumTxt()}</span><button class="btn primary" id="rbSave">儲存</button></div>`;
+}
+function drawRb() {
+  const mode = S.rbMode || 'buy', step = S.rbStep || 1;
+  document.querySelectorAll('#rbMode button').forEach(x => x.setAttribute('aria-pressed', String(x.dataset.v === mode)));
+  document.querySelectorAll('#rbStep button').forEach(x => x.setAttribute('aria-pressed', String(+x.dataset.v === step)));
+  const box = $('rbRes'); if (!box) return;
+  if (!S.targets.items.length) { box.innerHTML = '<p class="empty small">還沒有設定目標。按「編輯目標」，可以先用目前比例帶入再調整。</p>'; return; }
+  const cash = Math.max(0, Number(String(rbCash).replace(/,/g, '')) || 0);
+  const r = REBAL.rebalance({ holdings: rbHold(), targets: S.targets.items, prices: rbPrices, cash, mode, step, feeCfg: feeCfg(), names: rbName });
+  const st = r.sumTarget || 100, pc = v => `${fmt(v, 1)}%`;
+  box.innerHTML = r.rows.map(x => `<div class="rb-row"><span class="nm"><small>${x.code}</small>${esc(x.name)}${x.tgt ? '' : ' <small>（不在目標內）</small>'}</span>
+      <span class="act ${x.qty > 0 ? 'up' : x.qty < 0 ? 'down' : 'muted'}">${x.qty ? `${x.qty > 0 ? '買' : '賣'} ${fmt(Math.abs(x.qty))} 股` : '—'}</span>
+      <div class="rb-bar"><i style="width:${Math.min(100, x.curPct)}%"></i><b style="left:${Math.min(100, x.tgt / st * 100)}%"></b></div>
+      <span class="sub">目前 ${pc(x.curPct)}・目標 ${pc(x.tgt / st * 100)}・偏離 ${x.dev > 0 ? '+' : ''}${fmt(x.dev, 1)}・市值 ${fmt(x.value)}${x.qty ? `・約 ${fmt(Math.abs(x.amount))} 元・調整後 ${pc(x.newPct)}` : ''}</span></div>`).join('')
+    + `<p class="muted small">總市值 ${fmt(r.total)}${cash ? `・投入 ${fmt(cash)}` : ''}・手續費${mode === 'both' ? '與稅' : ''}約 ${fmt(r.fees)}・剩 ${fmt(r.left)} 元${r.missing.length ? `・抓不到股價：${r.missing.join('、')}` : ''}</p>`;
+}
+
 // 資產走勢（轉接站用同步的持股、賣出紀錄回推）
 let EQ = null, EQC = null;
 async function renderEqPanel(b) {
@@ -858,7 +936,7 @@ function drawEq() {
     <div><span>同期 0050（含息）</span><b>${pc(m.b0050)}</b><small>${m.twr != null && m.b0050 != null ? (m.twr >= m.b0050 ? `贏 ${fmt(m.twr - m.b0050, 2)} 點` : `輸 ${fmt(m.b0050 - m.twr, 2)} 點`) : ''}</small></div>
     <div><span>同期加權指數</span><b>${pc(m.twii)}</b></div><div><span>最大回檔</span><b>${pc(m.mdd)}</b></div>`;
 }
-for (const [id, fn] of [['pEq', renderEqPanel], ['pDiv', renderDivPanel], ['pYear', renderYearPanel], ['pPf', renderPfPanel], ['pNews', renderNewsPanel]]) {
+for (const [id, fn] of [['pRb', renderRbPanel], ['pEq', renderEqPanel], ['pDiv', renderDivPanel], ['pYear', renderYearPanel], ['pPf', renderPfPanel], ['pNews', renderNewsPanel]]) {
   $(id).addEventListener('toggle', () => { if ($(id).open) { const b = $(id).querySelector('.mbody'); b.innerHTML = '<p class="empty small">載入中…</p>'; fn(b).catch(e => { b.innerHTML = `<p class="empty small">${esc(e.message)}</p>`; }); } });
 }
 
