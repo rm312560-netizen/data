@@ -1,5 +1,5 @@
 // 資料查詢（手機版）：大盤、自選股、查詢與基本資料、試算、持股、排行、到價提醒；與電腦版同步
-const APP_VERSION = '1.4.5';
+const APP_VERSION = '1.4.6';
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmt = (n, d = 0) => Number(n).toLocaleString('zh-TW', { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -15,6 +15,7 @@ function loadSettings() {
     theme: DB.setting('theme', 'stealth'), interval: DB.setting('interval', 5), marketOnly: DB.setting('marketOnly', true),
     rate: DB.setting('rate', 0.1425), disc: DB.setting('disc', 6), minFee: DB.setting('minFee', 20),
     mvType: DB.setting('mvType', 'stock'), mvVol: DB.setting('mvVol', 500), mvCap: DB.setting('mvCap', 0), mvMore: DB.setting('mvMore', false),
+    indSort: DB.setting('indSort', 'pct'), scr: DB.setting('scr', null), scrOpen: DB.setting('scrOpen', false),   // 產業排序、選股條件
     qmode: DB.setting('qmode', 'lot'),          // 報價顯示：lot 整股（張）／odd 零股（股）
   });
 }
@@ -802,7 +803,78 @@ function renderInd() {
         <p class="muted small">成交值最大：${g.big.map(x => `${esc(x.name)} ${fmt(x.value, 1)} 億`).join('、')}</p></div>` : ''}`).join('');
   $('mvMeta').textContent = `${IND.time ? new Date(IND.time).toLocaleTimeString('zh-TW', { hour12: false }) + ' 更新・' : ''}上市上櫃 ${fmt(IND.count)} 檔股票・市值加權・點產業看成分股`;
 }
+// 選股：轉接站一次給全部上市櫃股票（本益比、營收由電腦版上傳，股價即時），條件在手機上篩
+const SCR_F = [['pe', '本益比', '倍'], ['yld', '殖利率', '%'], ['pb', '淨值比', '倍'], ['revYoy', '營收年增', '%'], ['cumYoy', '累計年增', '%'],
+  ['revMom', '營收月增', '%'], ['pct', '今日漲跌', '%'], ['vol', '成交量', '張'], ['cap', '市值', '億'], ['price', '股價', '元']];
+const SCR_PRESETS = {
+  '高殖利率': { yld: [5, ''], pe: ['', 20], vol: [200, ''] }, '低本益比': { pe: ['', 12], vol: [200, ''], cap: [50, ''] },
+  '營收成長': { revYoy: [20, ''], cumYoy: [15, ''], vol: [500, ''] }, '低淨值比': { pb: ['', 1], yld: [3, ''], vol: [100, ''] },
+  '大型績優': { cap: [1000, ''], pe: ['', 20], yld: [3, ''] }, '今日強勢': { pct: [3, ''], vol: [2000, ''] },
+};
+const SCR_SORT = { vol: ['成交量大→小', -1], pct: ['漲幅大→小', -1], pe: ['本益比低→高', 1], yld: ['殖利率高→低', -1], pb: ['淨值比低→高', 1], revYoy: ['營收年增高→低', -1], cap: ['市值大→小', -1] };
+let SCR = null, scrAt = 0, scrN = 50;
+const scrSt = () => S.scr || { f: {}, mkt: 'all', ind: '', sort: 'vol' };
+const scrSave = st => setS('scr', st);
+async function loadScr(force) {
+  if (!force && SCR && Date.now() - scrAt < 60e3) return renderScr();
+  if (!SCR) $('movers').innerHTML = '<p class="empty">載入中…（約需幾秒）</p>';
+  try {
+    const d = await api('/screener');
+    const K = ['code', 'name', 'mkt', 'ind', 'price', 'pct', 'vol', 'cap', 'pe', 'pb', 'yld', 'rev', 'revYoy', 'revMom', 'cumYoy'];
+    SCR = { ...d, list: d.rows.map(r => Object.fromEntries(K.map((k, i) => [k, r[i]]))) }; scrAt = Date.now();
+    scrForm(); renderScr();
+  } catch (e) { $('movers').innerHTML = `<p class="empty">選股資料讀取失敗：${esc(e.message)}${/找不到|404/.test(e.message) ? '（轉接站需要重新部署）' : ''}</p>`; }
+}
+// 條件區只在切過來時畫一次，輸入時只更新下面的結果（不然輸入框會失去焦點）
+function scrForm() {
+  if (!SCR || mvSide !== 'scr') return;
+  $('mvMore').hidden = true;
+  const st = scrSt(), n = Object.keys(st.f).length;
+  const inds = [...new Set(SCR.list.map(x => x.ind).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'zh-TW'));
+  $('movers').innerHTML = `<div class="scr-pre">${Object.keys(SCR_PRESETS).map(k => `<button data-preset="${k}">${k}</button>`).join('')}</div>
+    <details class="scr-box" id="scrBox"${S.scrOpen ? ' open' : ''}><summary>篩選條件${n ? `（${n} 個）` : ''}</summary>
+      ${SCR_F.map(([k, l, u]) => { const [a, b] = st.f[k] || ['', '']; return `<div class="scr-f${st.f[k] ? ' on' : ''}" data-f="${k}"><span>${l}（${u}）</span><input inputmode="decimal" placeholder="最低" value="${esc(a)}"><span>～</span><input inputmode="decimal" placeholder="最高" value="${esc(b)}"></div>`; }).join('')}
+      <div class="scr-opt"><div class="seg" id="scrMkt">${[['all', '全部'], ['tse', '上市'], ['otc', '上櫃']].map(([v, l]) => `<button data-mkt="${v}" aria-pressed="${st.mkt === v}">${l}</button>`).join('')}</div>
+        <select id="scrInd"><option value="">全部產業</option>${inds.map(x => `<option${x === st.ind ? ' selected' : ''}>${esc(x)}</option>`).join('')}</select>
+        <button class="btn" data-scrclear>清除</button></div>
+    </details>
+    <div class="scr-bar"><span id="scrCnt"></span><select id="scrSort">${Object.entries(SCR_SORT).map(([k, [l]]) => `<option value="${k}"${k === st.sort ? ' selected' : ''}>${l}</option>`).join('')}</select></div>
+    <div id="scrRes" class="list"></div>`;
+  $('scrBox').addEventListener('toggle', e => setS('scrOpen', e.target.open));
+}
+function renderScr() {
+  if (!SCR || mvSide !== 'scr') return;
+  if (!$('scrRes')) scrForm();
+  const st = scrSt();
+  const conds = Object.entries(st.f).map(([k, [a, b]]) => [k, a === '' ? null : +a, b === '' ? null : +b]).filter(([, a, b]) => a != null || b != null);
+  const [, dir] = SCR_SORT[st.sort] || SCR_SORT.vol, k = SCR_SORT[st.sort] ? st.sort : 'vol';
+  const rows = SCR.list.filter(x => (st.mkt === 'all' || x.mkt === st.mkt) && (!st.ind || x.ind === st.ind)
+    && conds.every(([c, a, b]) => x[c] != null && (a == null || x[c] >= a) && (b == null || x[c] <= b)))
+    .sort((p, q) => (p[k] == null) - (q[k] == null) || ((p[k] ?? 0) - (q[k] ?? 0)) * dir);
+  $('scrCnt').textContent = `符合 ${fmt(rows.length)} 檔／共 ${fmt(SCR.list.length)} 檔`;
+  const v = (x, d = 2, suf = '') => x == null ? '—' : fmt(x, d) + suf;
+  $('scrRes').innerHTML = rows.length ? rows.slice(0, scrN).map(x => `<div class="li" data-code="${x.code}"><span class="nm"><small>${x.code}</small>${esc(x.name)}</span><span class="p">${fmt(x.price, 2)}</span><span class="c ${cls(x.pct)}">${pctTxt(x.pct)}</span>
+      <span class="sub">${x.ind ? esc(x.ind) + '・' : ''}本益比 ${v(x.pe)}・殖利率 ${v(x.yld, 2, '%')}・淨值比 ${v(x.pb)}<br>營收年增 ${pctTxt(x.revYoy, 1)}・累計 ${pctTxt(x.cumYoy, 1)}・量 ${v(x.vol, 0)} 張${x.cap != null ? `・市值 ${capTxt(x.cap)}` : ''}</span></div>`).join('')
+    + (rows.length > 50 ? `<button class="btn more-btn" data-scrmore>${scrN < rows.length ? `▼ 顯示更多（目前 ${Math.min(scrN, rows.length)}／${rows.length} 檔）` : '▲ 收合'}</button>` : '')
+    : '<p class="empty">沒有符合條件的股票，放寬一點條件試試</p>';
+  $('mvMeta').textContent = `${SCR.live && SCR.time ? new Date(SCR.time).toLocaleTimeString('zh-TW', { hour12: false }) + ' 股價・' : '收盤股價・'}本益比 ${SCR.valDate || '—'}・營收 ${SCR.revMonth || '—'}（電腦版上傳）・本益比、淨值比、殖利率依即時股價換算，虧損公司沒有本益比・僅供參考`;
+}
+let scrT = null;
+$('movers').addEventListener('input', e => {
+  const f = e.target.closest('[data-f]'); if (!f) return;
+  const st = scrSt(), vals = [...f.querySelectorAll('input')].map(i => i.value.trim().replace(/[^\d.\-]/g, ''));
+  if (vals[0] === '' && vals[1] === '') delete st.f[f.dataset.f]; else st.f[f.dataset.f] = vals;
+  f.classList.toggle('on', !!st.f[f.dataset.f]);
+  const n = Object.keys(st.f).length;
+  $('scrBox').querySelector('summary').textContent = `篩選條件${n ? `（${n} 個）` : ''}`;
+  clearTimeout(scrT); scrT = setTimeout(() => { scrN = 50; scrSave(st); renderScr(); }, 300);
+});
+$('movers').addEventListener('change', e => {
+  if (e.target.id === 'scrInd') { const st = scrSt(); st.ind = e.target.value; scrN = 50; scrSave(st); renderScr(); }
+  if (e.target.id === 'scrSort') { const st = scrSt(); st.sort = e.target.value; scrN = 50; scrSave(st); renderScr(); }
+});
 async function loadMovers(force) {
+  if (mvSide === 'scr') return loadScr(force);
   if (mvSide === 'ind') return loadInd(force);
   if (mvSide === 'vol') return loadVol(force);
   if (!force && MV && Date.now() - mvAt < 30e3) return renderMovers();
@@ -811,6 +883,7 @@ async function loadMovers(force) {
   catch (e) { $('movers').innerHTML = `<p class="empty">排行讀取失敗：${esc(e.message)}</p>`; }
 }
 function renderMovers() {
+  if (mvSide === 'scr') return renderScr();
   if (mvSide === 'ind') return renderInd();
   if (mvSide === 'vol') return renderVol();
   if (!MV) return;
@@ -823,19 +896,25 @@ function renderMovers() {
 $('mvMore').addEventListener('click', () => { setS('mvMore', !S.mvMore); renderMovers(); if (!S.mvMore) $('v-movers').scrollIntoView(); });
 $('movers').addEventListener('click', e => {
   const s = e.target.closest('[data-isort]'); if (s) { setS('indSort', s.dataset.isort); renderInd(); return; }
+  const pr = e.target.closest('[data-preset]');
+  if (pr) { const st = scrSt(); st.f = Object.fromEntries(Object.entries(SCR_PRESETS[pr.dataset.preset]).map(([k, v]) => [k, v.map(String)])); scrN = 50; scrSave(st); scrForm(); renderScr(); toast(`已套用「${pr.dataset.preset}」`); return; }
+  const mk = e.target.closest('[data-mkt]');
+  if (mk) { const st = scrSt(); st.mkt = mk.dataset.mkt; scrSave(st); document.querySelectorAll('#scrMkt button').forEach(b => b.setAttribute('aria-pressed', String(b === mk))); scrN = 50; renderScr(); return; }
+  if (e.target.closest('[data-scrclear]')) { scrSave({ f: {}, mkt: 'all', ind: '', sort: scrSt().sort }); scrN = 50; scrForm(); renderScr(); return; }
+  if (e.target.closest('[data-scrmore]')) { const more = scrN < +($('scrCnt').textContent.match(/符合 ([\d,]+)/)?.[1].replace(/,/g, '') || 0); scrN = more ? scrN + 50 : 50; renderScr(); if (!more) $('v-movers').scrollIntoView(); return; }
   const g = e.target.closest('[data-ind]'); if (g) { indOpen = indOpen === g.dataset.ind ? null : g.dataset.ind; renderInd(); return; }
   const r = e.target.closest('[data-code]'); if (r) openStock(r.dataset.code);
 });
 $('mvType').addEventListener('click', e => { const b = e.target.closest('[data-t]'); if (!b) return; setS('mvType', b.dataset.t); syncMvUi(); mvSide === 'vol' ? renderVol() : loadMovers(true); });
-$('mvSide').addEventListener('click', e => { const b = e.target.closest('[data-s]'); if (!b) return; mvSide = b.dataset.s; syncMvUi(); loadMovers(); });
+$('mvSide').addEventListener('click', e => { const b = e.target.closest('[data-s]'); if (!b) return; mvSide = b.dataset.s; syncMvUi(); if (mvSide === 'scr' && SCR) scrForm(); loadMovers(); });
 $('mvVol').addEventListener('change', e => { setS('mvVol', Number(e.target.value)); loadMovers(true); });
 $('mvCap').addEventListener('change', e => { setS('mvCap', Number(e.target.value)); loadMovers(true); });
 function syncMvUi() {
   document.querySelectorAll('#mvType button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.t === S.mvType)));
   document.querySelectorAll('#mvSide button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.s === mvSide)));
   $('mvVol').value = String(S.mvVol); $('mvCap').value = String(S.mvCap); $('mvCap').disabled = S.mvType === 'etf';
-  $('mvFilters').hidden = mvSide === 'vol' || mvSide === 'ind';   // 成交量、產業不用篩選條件
-  $('mvTypeWrap').hidden = mvSide === 'ind';
+  $('mvFilters').hidden = mvSide === 'vol' || mvSide === 'ind' || mvSide === 'scr';   // 成交量、產業、選股不用這組篩選條件
+  $('mvTypeWrap').hidden = mvSide === 'ind' || mvSide === 'scr';
 }
 
 // ---------- 同步 ----------
