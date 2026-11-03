@@ -1,5 +1,5 @@
 // 資料查詢（手機版）：大盤、自選股、查詢與基本資料、試算、持股、排行、到價提醒；與電腦版同步
-const APP_VERSION = '1.5.1';
+const APP_VERSION = '1.5.2';
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmt = (n, d = 0) => Number(n).toLocaleString('zh-TW', { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -622,6 +622,34 @@ function renderBrief() {
 }
 $('wBriefBody').addEventListener('click', e => { const r = e.target.closest('[data-code]'); if (r) openStock(r.dataset.code); });
 
+// ---------- 收盤日報（持股頁最上面；13:30 收盤後到隔天 08:00 自動展開，盤中顯示「今日損益」） ----------
+let CLOSE = null, closeAt = 0, closeForce = false;
+const mktClosed = () => { const t = taipei(); return t.hm >= 13 * 60 + 30 || t.hm < 8 * 60 || t.day === 0 || t.day === 6; };
+async function loadClose() {
+  if (CLOSE && Date.now() - closeAt < 2 * 60e3) return renderClose();
+  try { CLOSE = await api('/close'); closeAt = Date.now(); renderClose(); } catch {}
+}
+function renderClose() {
+  const c = CLOSE, box = $('hClose'); if (!c) return;
+  if (!c.rows.length && !c.watch.length) { box.hidden = true; return; }
+  if (box.hidden) { box.hidden = false; box.open = closeForce || mktClosed(); }
+  const stealth = S.theme === 'stealth';
+  $('hCloseT').textContent = stealth ? '今日彙整' : (!mktClosed() && c.traded ? '今日損益（盤中）' : '收盤日報');
+  const t = c.total, money = v => `<span class="${cls(v)}">${v > 0 ? '+' : ''}${fmt(v)}</span>`, pc = v => `<span class="${cls(v)}">${pctTxt(v)}</span>`;
+  $('hCloseSum').innerHTML = c.rows.length ? `今日 ${money(t.dayPL)}（${pc(t.dayPct)}）` : `${+c.date.slice(5, 7)}/${+c.date.slice(8, 10)}`;
+  const tiles = (c.rows.length ? [
+    `<div class="bf-t key"><span class="n">今日損益</span><span class="v">${money(t.dayPL)}</span><span class="c">${pc(t.dayPct)}</span><span class="x">${c.traded ? '' : '今天沒開盤'}</span></div>`,
+    `<div class="bf-t"><span class="n">持股市值</span><span class="v">${fmt(t.value)}</span><span class="x">成本 ${fmt(t.cost)}</span></div>`,
+    `<div class="bf-t"><span class="n">未實現</span><span class="v">${money(t.unreal)}</span><span class="c">${pc(t.cost ? t.unreal / t.cost * 100 : null)}</span></div>`,
+  ] : []).concat(c.index.map(x => `<div class="bf-t"><span class="n">${esc(x.name)}</span><span class="v">${fmt(x.value, 2)}</span><span class="c">${pc(x.pct)}</span><span class="x">${x.turnover ? `${fmt(x.turnover / 1e8, 0)} 億` : ''}</span></div>`));
+  $('hCloseBody').innerHTML = `<div class="bf-grid">${tiles.join('')}</div>`
+    + (c.rows.length ? `<div class="bf-sec"><h4>持股</h4>${c.rows.map(r => `<div class="cl-row" data-code="${r.code}"><span class="nm"><small>${r.code}</small>${esc(r.name)}</span><span class="v">${r.price != null ? fmt(r.price, 2) : '—'}</span><span class="v">${pc(r.pct)}</span>
+      <span class="sub">今日 ${money(r.dayPL)}・${fmt(r.shares)} 股・市值 ${fmt(r.value)}・未實現 ${money(r.value - r.cost)}${r.sold ? `・今天賣出 ${fmt(r.sold)} 股` : ''}</span></div>`).join('')}</div>` : '')
+    + (c.watch.length ? `<div class="bf-sec"><h4>自選股漲跌最多</h4>${[...c.watch.slice(0, 2), ...(c.watch.length > 2 ? c.watch.slice(-2) : [])].filter((x, i, a) => a.indexOf(x) === i).map(x => `<div class="cl-row" data-code="${x.code}"><span class="nm"><small>${x.code}</small>${esc(x.name)}</span><span class="v">${fmt(x.price, 2)}</span><span class="v">${pc(x.pct)}</span></div>`).join('')}</div>` : '')
+    + (c.tomorrow.length ? `<div class="bf-sec"><h4>明天（${+c.nextDay.slice(5, 7)}/${+c.nextDay.slice(8, 10)}）要注意</h4>${c.tomorrow.map(x => `<div class="bf-ev" data-code="${x.code}"><small>${esc(x.label)}</small>${x.code} ${esc(x.name)}　<span class="muted small">${esc(x.text)}</span></div>`).join('')}</div>` : '');
+}
+$('hCloseBody').addEventListener('click', e => { const r = e.target.closest('[data-code]'); if (r) openStock(r.dataset.code); });
+
 // ---------- 持股風險提醒（持股頁最上面；沒有項目就不顯示） ----------
 let RISK = null, riskAt = 0, riskAll = false;
 async function loadRisk(force) {
@@ -855,10 +883,10 @@ $('pushOn').addEventListener('click', async () => {
   } catch (e) { toast(`開啟失敗：${e.message}`); }
 });
 // 推播選項：討論暴增提醒
-async function loadPushOpts() { try { const o = await api('/push/opts'); $('pushForum').checked = o.forum !== false; $('pushRisk').checked = o.risk !== false; $('pushBrief').checked = o.brief !== false; } catch {} }
-for (const [id, name] of [['pushForum', '討論暴增提醒'], ['pushRisk', '持股風險提醒'], ['pushBrief', '盤前早報']]) {
+async function loadPushOpts() { try { const o = await api('/push/opts'); $('pushForum').checked = o.forum !== false; $('pushRisk').checked = o.risk !== false; $('pushBrief').checked = o.brief !== false; $('pushClose').checked = o.close !== false; } catch {} }
+for (const [id, name] of [['pushForum', '討論暴增提醒'], ['pushRisk', '持股風險提醒'], ['pushBrief', '盤前早報'], ['pushClose', '收盤日報']]) {
   $(id).addEventListener('change', async e => {
-    try { await api('/push/opts', { method: 'PUT', body: JSON.stringify({ forum: $('pushForum').checked, risk: $('pushRisk').checked, brief: $('pushBrief').checked }) }); toast(`已${e.target.checked ? '開啟' : '關閉'}${name}`); }
+    try { await api('/push/opts', { method: 'PUT', body: JSON.stringify({ forum: $('pushForum').checked, risk: $('pushRisk').checked, brief: $('pushBrief').checked, close: $('pushClose').checked }) }); toast(`已${e.target.checked ? '開啟' : '關閉'}${name}`); }
     catch (err) { toast(err.message); e.target.checked = !e.target.checked; }
   });
 }
@@ -1190,7 +1218,7 @@ function go(v) {
   document.querySelectorAll('.tabbar button').forEach(b => b.toggleAttribute('aria-current', b.dataset.tab === v));
   if (v === 'watch') { renderWatch(); loadBrief(); }
   if (v === 'quote') renderQuote();
-  if (v === 'hold') { renderHold(); loadRisk(); }
+  if (v === 'hold') { renderHold(); loadRisk(); loadClose(); }
   if (v === 'movers') { syncMvUi(); loadMovers(); }
   if (v === 'settings') renderSettings();
   if (v === 'reports') { if (!rpOpen) { renderReports(); loadReports(); } }
@@ -1224,6 +1252,7 @@ async function afterSetup() {
   const tab = new URLSearchParams(location.search).get('tab');
   if (code && stockMap.has(code)) { if (tab === 'talk') fTab = 'talk'; history.replaceState(null, '', location.pathname); openStock(code); }
   else if (tab === 'hold') { history.replaceState(null, '', location.pathname); go('hold'); }   // 風險提醒推播
+  else if (tab === 'close') { history.replaceState(null, '', location.pathname); closeForce = true; go('hold'); if (!$('hClose').hidden) $('hClose').open = true; }   // 收盤日報推播
   else if (tab === 'brief') { history.replaceState(null, '', location.pathname); briefForce = true; go('watch'); if (!$('wBrief').hidden) $('wBrief').open = true; }   // 盤前早報推播
 }
 (async () => {

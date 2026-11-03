@@ -68,6 +68,7 @@
       <p class="muted small" id="hFee"></p>
       <button class="primary" type="submit">加入</button>
     </form>
+    <details id="hClose" class="brief-box" hidden><summary><b id="hCloseT" data-alt="今日彙整">收盤日報</b><span id="hCloseSum"></span></summary><div id="hCloseBody"></div></details>
     <div id="hRisk" class="risk-box" hidden></div>
     <div id="hSum" class="cards"></div>
     <div id="holds" class="list"></div>
@@ -130,6 +131,7 @@
       <label class="small" style="display:flex;gap:8px;align-items:center;margin:6px 0"><input type="checkbox" id="pushForum" checked> 討論暴增提醒（持股、自選股最近 1 小時的 Yahoo 留言超過平常 3 倍時通知，每檔每天最多一次）</label>
       <label class="small" style="display:flex;gap:8px;align-items:center;margin:6px 0"><input type="checkbox" id="pushRisk" checked> 持股風險提醒（持股、自選股被列為注意股、處置股、全額交割、暫停交易，或有法說會時，每天 08:00、18:30 檢查）</label>
       <label class="small" style="display:flex;gap:8px;align-items:center;margin:6px 0"><input type="checkbox" id="pushBrief" checked> 盤前早報（週一到週五 08:30，美股、費半、台積電 ADR、台指期夜盤、匯率）</label>
+      <label class="small" style="display:flex;gap:8px;align-items:center;margin:6px 0"><input type="checkbox" id="pushClose" checked> 收盤日報（週一到週五 13:45，持股今天賺賠、各檔漲跌、明天要注意的事）</label>
       <div class="btnrow"><button class="btn" id="pushOn">開啟推播</button><button class="btn" id="pushTest">送測試通知</button><button class="btn" id="pushOff">關閉</button></div>
     </div>
     <h2 class="sub">同步</h2>
