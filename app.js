@@ -1,5 +1,5 @@
 // 資料查詢（手機版）：大盤、自選股、查詢與基本資料、試算、持股、排行、到價提醒；與電腦版同步
-const APP_VERSION = '1.5.5';
+const APP_VERSION = '1.5.6';
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmt = (n, d = 0) => Number(n).toLocaleString('zh-TW', { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -17,6 +17,7 @@ function loadSettings() {
     mvType: DB.setting('mvType', 'stock'), mvVol: DB.setting('mvVol', 500), mvCap: DB.setting('mvCap', 0), mvMore: DB.setting('mvMore', false),
     targets: DB.setting('targets', { updatedAt: null, items: [] }), rbMode: DB.setting('rbMode', 'buy'), rbStep: DB.setting('rbStep', 1),
     eqMode: DB.setting('eqMode', 'ret'), eqRange: DB.setting('eqRange', 'all'),
+    ch: DB.setting('ch', { who: 'f', dir: 1, per: '', unit: 'lot', type: 'stock' }),
     indSort: DB.setting('indSort', 'pct'), scr: DB.setting('scr', null), scrOpen: DB.setting('scrOpen', false),   // 產業排序、選股條件
     qmode: DB.setting('qmode', 'lot'),          // 報價顯示：lot 整股（張）／odd 零股（股）
   });
@@ -1104,7 +1105,36 @@ $('movers').addEventListener('change', e => {
   if (e.target.id === 'scrInd') { const st = scrSt(); st.ind = e.target.value; scrN = 50; scrSave(st); renderScr(); }
   if (e.target.id === 'scrSort') { const st = scrSt(); st.sort = e.target.value; scrN = 50; scrSave(st); renderScr(); }
 });
+// 法人籌碼排行（電腦版每天整理後上傳）
+let CHR = null, chAt = 0;
+async function loadChip(force) {
+  if (!force && CHR && Date.now() - chAt < 10 * 60e3) return renderChip();
+  if (!CHR) $('movers').innerHTML = '<p class="empty">載入中…</p>';
+  try { CHR = await api('/chips-rank'); chAt = Date.now(); renderChip(); }
+  catch (e) { $('movers').innerHTML = `<p class="empty">籌碼資料讀取失敗：${esc(e.message)}${/找不到|404/.test(e.message) ? '（轉接站需要重新部署）' : ''}</p>`; }
+}
+function renderChip() {
+  if (!CHR || mvSide !== 'chip') return;
+  const st = S.ch, margin = ['mc', 'sc'].includes(st.who), ratio = st.who === 'ratio';
+  const key = margin || ratio ? st.who : st.who + st.per, dir = ratio ? 1 : +st.dir, amt = st.unit === 'amt' && !margin && !ratio;
+  const val = r => amt ? r[key] * r.price / 1e5 : r[key];
+  const list = (CHR.rows || []).filter(r => r.etf === (st.type === 'etf') && r[key] != null && r[key] * dir > 0).sort((a, b) => (val(b) - val(a)) * dir);
+  const sb = (g, opts, cur, dis) => `<div class="seg" data-g="${g}">${opts.map(([v, l]) => `<button data-v="${v}" aria-pressed="${String(v) === String(cur)}"${dis ? ' disabled' : ''}>${l}</button>`).join('')}</div>`;
+  const show = r => ratio ? `${fmt(r.ratio, 1)}%` : amt ? `${val(r) > 0 ? '+' : ''}${fmt(val(r), 2)} 億` : `${r[key] > 0 ? '+' : ''}${fmt(r[key])} 張`;
+  const sub = r => [!margin && !ratio && ['f', 't'].includes(st.who) && Math.abs(r[st.who + 's']) >= 2 ? `連${r[st.who + 's'] > 0 ? '買' : '賣'} ${Math.abs(r[st.who + 's'])} 天` : '',
+    margin || ratio ? `資餘 ${fmt(r.mb ?? 0)}・券餘 ${fmt(r.sb ?? 0)}` : `外資 ${fmt(r.f ?? 0)}・投信 ${fmt(r.t ?? 0)}・自營 ${fmt(r.d ?? 0)}`].filter(Boolean).join('・');
+  const n = S.mvMore ? 50 : 20, d = x => x ? `${+x.slice(5, 7)}/${+x.slice(8, 10)}` : '—';
+  $('movers').innerHTML = `<div class="ch-ctl"><select id="chWho">${[['f', '外資'], ['t', '投信'], ['d', '自營商'], ['tot', '三大法人'], ['mc', '融資'], ['sc', '融券'], ['ratio', '券資比']].map(([v, l]) => `<option value="${v}"${v === st.who ? ' selected' : ''}>${l}</option>`).join('')}</select>
+      ${sb('dir', [[1, margin ? '增加' : '買超'], [-1, margin ? '減少' : '賣超']], st.dir, ratio)}${sb('type', [['stock', '股票'], ['etf', 'ETF']], st.type)}</div>
+    <div class="ch-ctl">${sb('per', [['', '當日'], ['5', '5 日']], st.per, margin || ratio)}${sb('unit', [['lot', '張數'], ['amt', '金額']], st.unit, margin || ratio)}</div>`
+    + (list.slice(0, n).map((r, i) => `<div class="li" data-code="${r.code}"><span class="nm"><small>${i + 1}. ${r.code}</small>${esc(r.name)}</span><span class="p ${ratio ? '' : cls(r[key])}">${show(r)}</span><span class="c ${cls(r.pct)}">${pctTxt(r.pct)}</span>
+      <span class="sub">${sub(r)}</span></div>`).join('') || '<p class="empty">沒有資料（法人約 15:00、融資券約 21:30 公布，電腦版整理後上傳）</p>');
+  mvMoreBtn(list.length > 20 ? Math.min(50, list.length) : 0);
+  $('mvMeta').textContent = margin || ratio ? `${d(CHR.marDate)} 融資融券・電腦版整理上傳` : `${d(CHR.instDate)} 法人買賣超${st.per ? '（近 5 日累計）' : ''}・電腦版整理上傳`;
+}
+$('movers').addEventListener('change', e => { if (e.target.id === 'chWho') { S.ch.who = e.target.value; setS('ch', S.ch); renderChip(); } });
 async function loadMovers(force) {
+  if (mvSide === 'chip') return loadChip(force);
   if (mvSide === 'scr') return loadScr(force);
   if (mvSide === 'ind') return loadInd(force);
   if (mvSide === 'vol') return loadVol(force);
@@ -1114,6 +1144,7 @@ async function loadMovers(force) {
   catch (e) { $('movers').innerHTML = `<p class="empty">排行讀取失敗：${esc(e.message)}</p>`; }
 }
 function renderMovers() {
+  if (mvSide === 'chip') return renderChip();
   if (mvSide === 'scr') return renderScr();
   if (mvSide === 'ind') return renderInd();
   if (mvSide === 'vol') return renderVol();
@@ -1127,6 +1158,8 @@ function renderMovers() {
 $('mvMore').addEventListener('click', () => { setS('mvMore', !S.mvMore); renderMovers(); if (!S.mvMore) $('v-movers').scrollIntoView(); });
 $('movers').addEventListener('click', e => {
   const s = e.target.closest('[data-isort]'); if (s) { setS('indSort', s.dataset.isort); renderInd(); return; }
+  const cg = mvSide === 'chip' && e.target.closest('[data-g] button');
+  if (cg) { if (cg.disabled) return; const g = cg.closest('[data-g]').dataset.g; S.ch[g] = g === 'dir' ? +cg.dataset.v : cg.dataset.v; setS('ch', S.ch); renderChip(); return; }
   const sg = e.target.closest('[data-sig]');
   if (sg) { const st = scrSt(), on = new Set(st.sig || []); on.has(sg.dataset.sig) ? on.delete(sg.dataset.sig) : on.add(sg.dataset.sig); st.sig = [...on]; sg.setAttribute('aria-pressed', String(on.has(sg.dataset.sig))); scrN = 50; scrSave(st); renderScr();
     const n = Object.keys(st.f).length + st.sig.length; $('scrBox').querySelector('summary').textContent = `篩選條件${n ? `（${n} 個）` : ''}`; return; }
@@ -1147,8 +1180,8 @@ function syncMvUi() {
   document.querySelectorAll('#mvType button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.t === S.mvType)));
   document.querySelectorAll('#mvSide button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.s === mvSide)));
   $('mvVol').value = String(S.mvVol); $('mvCap').value = String(S.mvCap); $('mvCap').disabled = S.mvType === 'etf';
-  $('mvFilters').hidden = mvSide === 'vol' || mvSide === 'ind' || mvSide === 'scr';   // 成交量、產業、選股不用這組篩選條件
-  $('mvTypeWrap').hidden = mvSide === 'ind' || mvSide === 'scr';
+  $('mvFilters').hidden = ['vol', 'ind', 'scr', 'chip'].includes(mvSide);   // 成交量、產業、選股、籌碼不用這組篩選條件
+  $('mvTypeWrap').hidden = ['ind', 'scr', 'chip'].includes(mvSide);
 }
 
 // ---------- 同步 ----------

@@ -275,6 +275,12 @@ body.stealth .rk .tag { background: none; color: var(--fg); border-color: var(--
 .rk.lv3 .tx, .rk.lv2 .tx { color: var(--fg); }
 .rk.lv1 .tx, .rk.lv0 .tx { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .risk-box .rk-more { border: 0; background: none; color: var(--muted); font-size: .8rem; padding: 6px 0 2px; }
+/* 法人籌碼 */
+.ch-ctl { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 6px; }
+.ch-ctl select { font-size: 16px; padding: 5px 8px; }
+.ch-ctl .seg { margin: 0; flex: none; }
+.ch-ctl .seg button { padding: 5px 9px; font-size: .8rem; flex: none; }
+.ch-ctl .seg button:disabled { opacity: .35; }
 /* 選股 */
 .scr-pre { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; padding-bottom: 8px; }
 .scr-pre button { flex: none; border: 1px solid var(--line); background: var(--panel); border-radius: 999px; padding: 5px 12px; font-size: .82rem; white-space: nowrap; }
