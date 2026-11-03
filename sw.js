@@ -1,6 +1,6 @@
 // 離線用：App 檔案存在手機上（報價仍需要網路）。改版時把 VERSION 加 1。
-const VERSION = 'tsdata-v12';
-const FILES = ['./', 'index.html', 'style.css', 'app.js', 'calc.js', 'db.js', 'config.js', 'manifest.webmanifest',
+const VERSION = 'tsdata-v13';
+const FILES = ['./', 'index.html', 'style.css', 'app.js', 'calc.js', 'kchart.js', 'db.js', 'config.js', 'manifest.webmanifest',
   'vendor/sql-wasm.js', 'vendor/sql-wasm.wasm', 'icons/icon-180.png', 'icons/icon-192.png', 'icons/icon-512.png'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(VERSION).then(c => c.addAll(FILES)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(k => Promise.all(k.filter(x => x !== VERSION).map(x => caches.delete(x)))).then(() => self.clients.claim())); });

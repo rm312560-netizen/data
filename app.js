@@ -1,5 +1,5 @@
 // 資料查詢（手機版）：大盤、自選股、查詢與基本資料、試算、持股、排行、到價提醒；與電腦版同步
-const APP_VERSION = '1.4.7';
+const APP_VERSION = '1.4.8';
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmt = (n, d = 0) => Number(n).toLocaleString('zh-TW', { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -70,7 +70,7 @@ async function refreshStocks() {
   const r = await api('/stocks');
   if (!r.stocks?.length) return;
   if (DB.meta('stocks_date') === r.dataDate && STOCKS.length) return;
-  DB.batch(run => { run('DELETE FROM stocks'); for (const s of r.stocks) run('INSERT INTO stocks (code, name, market, close, change, shares, volume) VALUES (?, ?, ?, ?, ?, ?, ?)', s); });
+  DB.batch(run => { run('DELETE FROM stocks'); for (const s of r.stocks) run('INSERT INTO stocks (code, name, market, close, change, shares, volume) VALUES (?, ?, ?, ?, ?, ?, ?)', s.slice(0, 7)); });   // 第 8 欄起（產業別等）手機用不到
   DB.setMeta('stocks_date', r.dataDate || '');
   loadStocksLocal();
 }
@@ -215,6 +215,7 @@ function openStock(code) {
   go('quote'); renderQuote(); poll(true); loadFund();
 }
 function renderQuote() {
+  kLive();
   if (!cur) { $('quote').innerHTML = '<p class="empty">輸入代號或名稱查詢。</p>'; $('fund').hidden = true; return; }
   const s = cur, qt = Q[s.code], v = x => x > 0 ? fmt(x, 2) : '—';
   const inWatch = !!DB.get('SELECT 1 FROM watchlist WHERE code = ?', [s.code]);
@@ -267,7 +268,21 @@ function oddHtml(qt, o, v) {
 const capTxt = c => c >= 10000 ? `${fmt(c / 10000, 2)} 兆` : `${fmt(c, c >= 100 ? 0 : 1)} 億`;
 
 // ---------- 基本資料 ----------
-let FUND = null, fundSeq = 0, fTab = 'trend', fRange = '1y', holdAll = false;
+let FUND = null, fundSeq = 0, fTab = 'k', fRange = '1y', holdAll = false;
+// K 線圖（kchart.js）：同一檔股票只建一次，報價更新時用即時價改最後一根
+let KC = null;
+function renderK() {
+  const body = $('fBody'), code = cur.code;
+  if (KC && KC.code === code && body.contains(KC.el)) return;
+  KC?.destroy();
+  body.innerHTML = '<div class="kc"></div><p class="muted small" style="margin-top:6px">左右滑動移動、兩指縮放（或按＋－），點一下 K 棒看當天數值。只是技術面參考。</p>';
+  const el = body.firstChild, css = n => getComputedStyle(document.body).getPropertyValue(n).trim();
+  KC = KChart(el, { height: 360, load: () => api(`/kline?code=${code}`), stealth: () => document.body.classList.contains('stealth'),
+    colors: () => ({ up: css('--up'), down: css('--down'), fg: css('--fg'), muted: css('--muted'), line: css('--line'), bg: css('--panel') }) });
+  KC.code = code; KC.el = el;
+  kLive();
+}
+function kLive() { const q = cur && Q[cur.code]; if (KC && q && KC.code === cur.code && q.priceSource !== 'prev') KC.live(q.price, String(q.date || '').replace(/(\d{4})(\d{2})(\d{2})/, '$1-$2-$3')); }
 async function finmind(dataset, code, start) {
   const r = await fetch(`https://api.finmindtrade.com/api/v4/data?dataset=${dataset}&data_id=${code}&start_date=${start}`);
   const j = await r.json(); if (j.status !== 200) throw new Error(j.msg || 'FinMind 讀取失敗');
@@ -275,7 +290,8 @@ async function finmind(dataset, code, start) {
 }
 async function loadFund() {
   const s = cur, seq = fundSeq, etf = CALC.isEtf(s.code);
-  $('fBody').innerHTML = '<p class="empty">載入基本資料中…</p>';
+  if (fTab === 'k') { document.querySelectorAll('[data-ft]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.ft === 'k'))); renderK(); }
+  else $('fBody').innerHTML = '<p class="empty">載入基本資料中…</p>';
   document.querySelector('[data-ft=hold]').hidden = !etf;
   if (fTab === 'hold' && !etf) fTab = 'trend';
   const errs = [];
@@ -298,6 +314,8 @@ async function loadFund() {
 function priceNow() { return Q[cur?.code]?.price || cur?.close; }
 function renderFund() {
   document.querySelectorAll('[data-ft]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.ft === fTab)));
+  if (fTab === 'k') return renderK();
+  if (KC) { KC.destroy(); KC = null; }
   if (fTab === 'calc') { $('fBody').innerHTML = calcHtml(); bindCalc(); return; }
   if (fTab === 'talk') { forumTab(cur.code); return; }
   if (['chips', 'rev', 'news', 'bt'].includes(fTab)) { fundExtra(cur.code, fTab); return; }
