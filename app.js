@@ -1,5 +1,5 @@
 // 資料查詢（手機版）：大盤、自選股、查詢與基本資料、試算、持股、排行、到價提醒；與電腦版同步
-const APP_VERSION = '1.4.8';
+const APP_VERSION = '1.4.9';
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmt = (n, d = 0) => Number(n).toLocaleString('zh-TW', { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -599,6 +599,28 @@ $('hForm').addEventListener('submit', e => {
   $('hForm').hidden = true; toast('已加入持股'); renderHold(); syncSoon(); poll(true);
 });
 let openLots = new Set();
+// ---------- 盤前早報（自選頁最上面；09:30 前自動展開） ----------
+let BRIEF = null, briefAt = 0, briefForce = false;
+async function loadBrief() {
+  if (BRIEF && Date.now() - briefAt < 5 * 60e3) return renderBrief();
+  try { BRIEF = await api('/brief'); briefAt = Date.now(); renderBrief(); } catch {}
+}
+function renderBrief() {
+  const b = BRIEF, box = $('wBrief'); if (!b) return;
+  if (box.hidden) { box.hidden = false; box.open = briefForce || taipei().hm < 9 * 60 + 30; }
+  const g = s => b.markets.find(x => x.sym === s), p = x => x ? pctTxt(x.pct) : '—';
+  $('wBriefSum').textContent = `${+b.date.slice(5, 7)}/${+b.date.slice(8, 10)}・費半 ${p(g('^SOX'))}・ADR ${p(g('TSM'))}`;
+  const order = ['tw', 'us', 'fx'], dg = { '^TNX': 3, 'TWD=X': 3 };
+  const tile = x => `<div class="bf-t${['^SOX', 'TSM', 'WTX&'].includes(x.sym) ? ' key' : ''}"><span class="n">${esc(x.name)}</span><span class="v">${fmt(x.price, dg[x.sym] ?? (x.price >= 1000 ? 0 : 2))}</span><span class="c ${cls(x.pct)}">${pctTxt(x.pct)}</span>
+    <span class="x">${x.premium != null ? `溢價 ${fmt(x.premium, 1)}%` : x.sym === 'WTX&' ? x.time.slice(11) : x.time.slice(5, 10).replace('-', '/')}</span></div>`;
+  const a = b.ai;
+  $('wBriefBody').innerHTML = `<div class="bf-grid">${b.markets.slice().sort((x, y) => order.indexOf(x.group) - order.indexOf(y.group)).map(tile).join('')}</div>`
+    + (b.events.length ? `<div class="bf-sec"><h4>今天要注意</h4>${b.events.map(x => `<div class="bf-ev" data-code="${x.code}"><small>${esc(x.label)}</small>${x.code} ${esc(x.name)}　<span class="muted small">${esc(x.text)}</span></div>`).join('')}</div>` : '')
+    + (a ? `<div class="bf-sec"><h4>AI 早報解讀（${esc(String(a.at).slice(11, 16))}，電腦版產生）</h4><p>${esc(a.summary)}</p><ul>${a.points.map(x => `<li>${esc(x)}</li>`).join('')}</ul>${a.holdings ? `<p><b>持股：</b>${esc(a.holdings)}</p>` : ''}${a.watch ? `<p><b>盤中留意：</b>${esc(a.watch)}</p>` : ''}<p class="muted small">僅供參考，不是投資建議</p></div>` : '');
+  if (S.theme === 'stealth') box.querySelectorAll('[data-alt]').forEach(el => { el.textContent = el.dataset.alt; });
+}
+$('wBriefBody').addEventListener('click', e => { const r = e.target.closest('[data-code]'); if (r) openStock(r.dataset.code); });
+
 // ---------- 持股風險提醒（持股頁最上面；沒有項目就不顯示） ----------
 let RISK = null, riskAt = 0, riskAll = false;
 async function loadRisk(force) {
@@ -788,10 +810,10 @@ $('pushOn').addEventListener('click', async () => {
   } catch (e) { toast(`開啟失敗：${e.message}`); }
 });
 // 推播選項：討論暴增提醒
-async function loadPushOpts() { try { const o = await api('/push/opts'); $('pushForum').checked = o.forum !== false; $('pushRisk').checked = o.risk !== false; } catch {} }
-for (const [id, name] of [['pushForum', '討論暴增提醒'], ['pushRisk', '持股風險提醒']]) {
+async function loadPushOpts() { try { const o = await api('/push/opts'); $('pushForum').checked = o.forum !== false; $('pushRisk').checked = o.risk !== false; $('pushBrief').checked = o.brief !== false; } catch {} }
+for (const [id, name] of [['pushForum', '討論暴增提醒'], ['pushRisk', '持股風險提醒'], ['pushBrief', '盤前早報']]) {
   $(id).addEventListener('change', async e => {
-    try { await api('/push/opts', { method: 'PUT', body: JSON.stringify({ forum: $('pushForum').checked, risk: $('pushRisk').checked }) }); toast(`已${e.target.checked ? '開啟' : '關閉'}${name}`); }
+    try { await api('/push/opts', { method: 'PUT', body: JSON.stringify({ forum: $('pushForum').checked, risk: $('pushRisk').checked, brief: $('pushBrief').checked }) }); toast(`已${e.target.checked ? '開啟' : '關閉'}${name}`); }
     catch (err) { toast(err.message); e.target.checked = !e.target.checked; }
   });
 }
@@ -1121,7 +1143,7 @@ function go(v) {
   view = v;
   document.querySelectorAll('.view').forEach(s => { s.hidden = s.id !== `v-${v}`; });
   document.querySelectorAll('.tabbar button').forEach(b => b.toggleAttribute('aria-current', b.dataset.tab === v));
-  if (v === 'watch') renderWatch();
+  if (v === 'watch') { renderWatch(); loadBrief(); }
   if (v === 'quote') renderQuote();
   if (v === 'hold') { renderHold(); loadRisk(); }
   if (v === 'movers') { syncMvUi(); loadMovers(); }
@@ -1157,6 +1179,7 @@ async function afterSetup() {
   const tab = new URLSearchParams(location.search).get('tab');
   if (code && stockMap.has(code)) { if (tab === 'talk') fTab = 'talk'; history.replaceState(null, '', location.pathname); openStock(code); }
   else if (tab === 'hold') { history.replaceState(null, '', location.pathname); go('hold'); }   // 風險提醒推播
+  else if (tab === 'brief') { history.replaceState(null, '', location.pathname); briefForce = true; go('watch'); if (!$('wBrief').hidden) $('wBrief').open = true; }   // 盤前早報推播
 }
 (async () => {
   try {
