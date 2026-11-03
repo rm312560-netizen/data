@@ -208,3 +208,13 @@ svg.btc { width: 100%; height: 140px; display: block; }
 .fm-post .d { flex: none; font-size: .74rem; color: var(--muted); }
 
 .more-btn { display: block; width: 100%; margin-top: 8px; padding: 10px 12px; border-style: dashed; color: var(--muted); }
+
+/* 產業漲跌 */
+.ind-sort { margin: 4px 0 6px; }
+.li.ind { cursor: pointer; grid-template-columns: minmax(0, 1fr) auto; }
+.li.ind .nm small { margin-left: 4px; }
+.ind-mem { padding: 4px 0 8px 14px; border-bottom: 1px solid var(--line); }
+.ind-mem .li { padding: 7px 2px; }
+.ind-mem p { margin: 8px 0 2px; }
+.ind-ai { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; }
+.ind-ai p { margin: 0 0 6px; } .ind-ai p:last-child { margin: 0; }

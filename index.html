@@ -76,16 +76,16 @@
 
   <!-- 排行 -->
   <section id="v-movers" class="view" hidden>
-    <div class="seg" id="mvType">
+    <div id="mvTypeWrap"><div class="seg" id="mvType">
       <button data-t="stock" aria-pressed="true">股票</button>
       <button data-t="etf" aria-pressed="false">ETF</button>
       <button data-t="all" aria-pressed="false">全部</button>
-    </div>
+    </div></div>
     <div class="filters" id="mvFilters">
       <label>成交量 ≥ <select id="mvVol"><option value="200">200 張</option><option value="500">500 張</option><option value="1000">1,000 張</option><option value="3000">3,000 張</option></select></label>
       <label>市值 ≥ <select id="mvCap"><option value="0">不限</option><option value="50">50 億</option><option value="100">100 億</option><option value="300">300 億</option><option value="1000">1,000 億</option></select></label>
     </div>
-    <div class="seg" id="mvSide"><button data-s="up" aria-pressed="true" data-alt="（+）">漲幅</button><button data-s="down" aria-pressed="false" data-alt="（−）">跌幅</button><button data-s="vol" aria-pressed="false" data-alt="量">成交量</button></div>
+    <div class="seg" id="mvSide"><button data-s="up" aria-pressed="true" data-alt="（+）">漲幅</button><button data-s="down" aria-pressed="false" data-alt="（−）">跌幅</button><button data-s="vol" aria-pressed="false" data-alt="量">成交量</button><button data-s="ind" aria-pressed="false" data-alt="類別">產業</button></div>
     <div id="movers" class="list"></div>
     <button class="btn more-btn" id="mvMore" hidden></button>
     <p class="muted small" id="mvMeta"></p>

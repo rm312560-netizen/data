@@ -1,5 +1,5 @@
 // 資料查詢（手機版）：大盤、自選股、查詢與基本資料、試算、持股、排行、到價提醒；與電腦版同步
-const APP_VERSION = '1.4.4';
+const APP_VERSION = '1.4.5';
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmt = (n, d = 0) => Number(n).toLocaleString('zh-TW', { minimumFractionDigits: d, maximumFractionDigits: d });
@@ -774,7 +774,36 @@ function renderVol() {
     <span class="sub">成交 <b>${fmt(x.volume)}</b> 張${x.value != null ? `・成交值 ${fmt(x.value, 1)} 億` : ''}</span></div>`).join('') : '<p class="empty">沒有資料</p>';
   $('mvMeta').textContent = `${VR.time ? new Date(VR.time).toLocaleTimeString('zh-TW', { hour12: false }) + ' 更新・' : ''}${{ stock: '只看股票', etf: '只看 ETF', all: '股票與 ETF 一起排' }[S.mvType] || ''}・上市上櫃一起排名`;
 }
+// 產業漲跌：點產業展開漲跌前 10 與成交值前 5（AI 產業分析由電腦版產生）
+let IND = null, indAt = 0, indOpen = null;
+async function loadInd(force) {
+  if (!force && IND && Date.now() - indAt < 60e3) return renderInd();
+  if (!IND) $('movers').innerHTML = '<p class="empty">載入中…（約需幾秒）</p>';
+  try { IND = await api('/industries'); indAt = Date.now(); renderInd(); }
+  catch (e) { $('movers').innerHTML = `<p class="empty">產業資料讀取失敗：${esc(e.message)}${/找不到|404/.test(e.message) ? '（轉接站需要重新部署）' : ''}</p>`; }
+}
+function renderInd() {
+  if (!IND || mvSide !== 'ind') return;
+  $('mvMore').hidden = true;
+  const sort = S.indSort || 'pct';
+  const list = IND.industries.filter(g => g.n >= 2).slice().sort((a, b) => sort === 'value' ? b.value - a.value : b.pct - a.pct);
+  const mem = x => `<div class="li" data-code="${x.code}"><span class="nm"><small>${x.code}</small>${esc(x.name)}</span><span class="p">${fmt(x.price, 2)}</span><span class="c ${cls(x.pct)}">${pctTxt(x.pct)}</span></div>`;
+  const a = IND.ai;
+  $('movers').innerHTML = (a ? `<div class="ind-ai"><p>${esc(a.summary)}</p>
+      ${a.strong.map(x => `<p class="small"><b class="up">▲ ${esc(x.name)}</b>　${esc(x.why)}</p>`).join('')}
+      ${a.weak.map(x => `<p class="small"><b class="down">▼ ${esc(x.name)}</b>　${esc(x.why)}</p>`).join('')}
+      ${a.watch ? `<p class="small"><b>觀察：</b>${esc(a.watch)}</p>` : ''}
+      <p class="muted small">AI 整理於 ${esc(String(a.at).slice(11, 16))}（電腦版產生）・僅供參考</p></div>` : '')
+    + `<div class="seg ind-sort"><button data-isort="pct" aria-pressed="${sort === 'pct'}">依漲跌幅</button><button data-isort="value" aria-pressed="${sort === 'value'}">依成交值</button></div>`
+    + list.map(g => `<div class="li ind" data-ind="${g.id}"><span class="nm">${indOpen === g.id ? '▾' : '▸'} ${esc(g.name)} <small>${g.n} 檔</small></span><span class="c ${cls(g.pct)}">${pctTxt(g.pct)}</span>
+      <span class="sub">漲 ${g.up}／跌 ${g.down}・成交值 ${fmt(g.value, g.value >= 100 ? 0 : 1)} 億</span></div>
+      ${indOpen === g.id ? `<div class="ind-mem"><p class="muted small">漲幅前 ${g.top.length}</p>${g.top.map(mem).join('')}
+        ${g.bottom.length ? `<p class="muted small">跌幅前 ${g.bottom.length}</p>${g.bottom.map(mem).join('')}` : ''}
+        <p class="muted small">成交值最大：${g.big.map(x => `${esc(x.name)} ${fmt(x.value, 1)} 億`).join('、')}</p></div>` : ''}`).join('');
+  $('mvMeta').textContent = `${IND.time ? new Date(IND.time).toLocaleTimeString('zh-TW', { hour12: false }) + ' 更新・' : ''}上市上櫃 ${fmt(IND.count)} 檔股票・市值加權・點產業看成分股`;
+}
 async function loadMovers(force) {
+  if (mvSide === 'ind') return loadInd(force);
   if (mvSide === 'vol') return loadVol(force);
   if (!force && MV && Date.now() - mvAt < 30e3) return renderMovers();
   $('movers').innerHTML = '<p class="empty">載入中…</p>';
@@ -782,6 +811,7 @@ async function loadMovers(force) {
   catch (e) { $('movers').innerHTML = `<p class="empty">排行讀取失敗：${esc(e.message)}</p>`; }
 }
 function renderMovers() {
+  if (mvSide === 'ind') return renderInd();
   if (mvSide === 'vol') return renderVol();
   if (!MV) return;
   const all = MV[mvSide] || [], list = all.slice(0, mvN());
@@ -791,7 +821,11 @@ function renderMovers() {
   $('mvMeta').textContent = `${MV.time ? new Date(MV.time).toLocaleTimeString('zh-TW', { hour12: false }) + ' 更新・' : ''}排除成交量未滿 ${fmt(S.mvVol)} 張${S.mvCap && S.mvType !== 'etf' ? `、市值未滿 ${fmt(S.mvCap)} 億` : ''}`;
 }
 $('mvMore').addEventListener('click', () => { setS('mvMore', !S.mvMore); renderMovers(); if (!S.mvMore) $('v-movers').scrollIntoView(); });
-$('movers').addEventListener('click', e => { const r = e.target.closest('[data-code]'); if (r) openStock(r.dataset.code); });
+$('movers').addEventListener('click', e => {
+  const s = e.target.closest('[data-isort]'); if (s) { setS('indSort', s.dataset.isort); renderInd(); return; }
+  const g = e.target.closest('[data-ind]'); if (g) { indOpen = indOpen === g.dataset.ind ? null : g.dataset.ind; renderInd(); return; }
+  const r = e.target.closest('[data-code]'); if (r) openStock(r.dataset.code);
+});
 $('mvType').addEventListener('click', e => { const b = e.target.closest('[data-t]'); if (!b) return; setS('mvType', b.dataset.t); syncMvUi(); mvSide === 'vol' ? renderVol() : loadMovers(true); });
 $('mvSide').addEventListener('click', e => { const b = e.target.closest('[data-s]'); if (!b) return; mvSide = b.dataset.s; syncMvUi(); loadMovers(); });
 $('mvVol').addEventListener('change', e => { setS('mvVol', Number(e.target.value)); loadMovers(true); });
@@ -800,7 +834,8 @@ function syncMvUi() {
   document.querySelectorAll('#mvType button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.t === S.mvType)));
   document.querySelectorAll('#mvSide button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.s === mvSide)));
   $('mvVol').value = String(S.mvVol); $('mvCap').value = String(S.mvCap); $('mvCap').disabled = S.mvType === 'etf';
-  $('mvFilters').hidden = mvSide === 'vol';   // 成交量排行不用篩選條件
+  $('mvFilters').hidden = mvSide === 'vol' || mvSide === 'ind';   // 成交量、產業不用篩選條件
+  $('mvTypeWrap').hidden = mvSide === 'ind';
 }
 
 // ---------- 同步 ----------
